@@ -2,129 +2,60 @@
 import React, { useState, useMemo } from 'react';
 import { 
   Search, PlusCircle, Filter, MapPin, PackagePlus, 
-  Minus, Plus, Hash, Pencil 
+  Minus, Plus, Hash, Pencil, AlertTriangle, CheckCircle2, AlertOctagon, MoreHorizontal
 } from 'lucide-react';
 import { StockItem, Theme, ViewMode } from '../types';
 import { ItemModal } from './ItemModal';
 
-// --- COPIED STOCK CARD COMPONENT (ISOLATED) ---
-// This ensures changes to the dashboard card don't break the inventory view and vice versa.
+// --- SHARED LOGIC HOOK ---
+const useStockAdjust = (item: StockItem, onUpdate: (id: string, n: number) => void, onLogStock: any) => {
+    const [bulkInput, setBulkInput] = useState('');
 
-interface StockCardProps {
+    const handleAdjust = (amount: number) => {
+        const currentLevel = item.stockLevel;
+        const newLevel = Math.max(0, currentLevel + amount);
+        const diff = newLevel - currentLevel;
+
+        if (diff !== 0) {
+            const action = diff > 0 ? 'add' : 'remove';
+            const absQty = Math.abs(diff);
+            onLogStock(item.id, item.name, action, absQty, 'Manuell (Bestand)', 'manual');
+            onUpdate(item.id, newLevel);
+        }
+    };
+
+    const handleClick = (e: React.MouseEvent, sign: number) => {
+        e.stopPropagation();
+        const val = parseInt(bulkInput);
+        const qty = (!isNaN(val) && val > 0) ? val : 1;
+        handleAdjust(qty * sign);
+        setBulkInput('');
+    };
+
+    return { bulkInput, setBulkInput, handleClick };
+};
+
+// --- GRID CARD COMPONENT ---
+interface StockComponentProps {
   item: StockItem;
   onUpdate: (id: string, newLevel: number) => void;
   onAddStock: () => void;
   onLogStock: (itemId: string, itemName: string, action: 'add' | 'remove', quantity: number, source?: string, context?: 'normal' | 'project' | 'manual' | 'po-normal' | 'po-project') => void;
   onClick: (item: StockItem) => void;
-  viewMode: 'grid' | 'list';
   theme: Theme;
 }
 
-const InventoryProductCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddStock, onLogStock, onClick, viewMode, theme }) => {
-  const [bulkInput, setBulkInput] = useState('');
+const InventoryProductCard: React.FC<StockComponentProps> = ({ item, onUpdate, onAddStock, onLogStock, onClick, theme }) => {
   const isDark = theme === 'dark';
-
-  const handleAdjust = (amount: number) => {
-    const currentLevel = item.stockLevel;
-    const newLevel = Math.max(0, currentLevel + amount);
-    const diff = newLevel - currentLevel;
-
-    if (diff !== 0) {
-      const action = diff > 0 ? 'add' : 'remove';
-      const absQty = Math.abs(diff);
-      onLogStock(item.id, item.name, action, absQty, 'Manuell (Bestand)', 'manual');
-      onUpdate(item.id, newLevel);
-    }
-  };
-
-  const handleClick = (e: React.MouseEvent, sign: number) => {
-    e.stopPropagation();
-    const val = parseInt(bulkInput);
-    const qty = (!isNaN(val) && val > 0) ? val : 1;
-    handleAdjust(qty * sign);
-    setBulkInput('');
-  };
-
-  const handleBulkAdjust = (e: React.MouseEvent, sign: number) => {
-    e.stopPropagation();
-    const val = parseInt(bulkInput);
-    if (!isNaN(val) && val > 0) {
-      handleAdjust(val * sign);
-      setBulkInput('');
-    }
-  };
+  const { bulkInput, setBulkInput, handleClick } = useStockAdjust(item, onUpdate, onLogStock);
 
   const getStockStatus = () => {
-    if (item.stockLevel <= 0) return { bg: 'bg-red-500/20', text: 'text-red-500', label: 'Out of Stock' };
-    if (item.stockLevel < item.minStock) return { bg: 'bg-amber-500/20', text: 'text-amber-600', label: 'Low Stock' };
-    return { bg: 'bg-emerald-500/20', text: 'text-emerald-600', label: 'In Stock' };
+    if (item.stockLevel <= 0) return { bg: 'bg-red-500/20', text: 'text-red-500', label: 'Out' };
+    if (item.stockLevel < item.minStock) return { bg: 'bg-amber-500/20', text: 'text-amber-600', label: 'Low' };
+    return { bg: 'bg-emerald-500/20', text: 'text-emerald-600', label: 'OK' };
   };
 
   const status = getStockStatus();
-
-  if (viewMode === 'list') {
-    return (
-      <div 
-        className={`flex flex-col sm:flex-row sm:items-center gap-3 md:gap-4 p-3 border rounded-lg transition-all group backdrop-blur-sm cursor-pointer ${
-            isDark 
-            ? 'bg-slate-800/50 border-slate-700/50 hover:border-slate-600' 
-            : 'bg-white/70 border-[#CACCCE]/50 hover:border-[#0077B5] shadow-sm'
-        }`}
-        onClick={() => onClick(item)}
-      >
-        <div className={`hidden sm:block w-2 h-10 rounded-full shrink-0 ${status.bg.replace('/20', '')}`} />
-        
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between mb-1 sm:mb-0">
-            <h3 className={`text-sm font-semibold truncate transition-colors group-hover:text-[#0077B5] ${isDark ? 'text-slate-100' : 'text-[#313335]'}`}>
-              {item.name}
-            </h3>
-            <div className={`sm:hidden w-2 h-2 rounded-full ${status.bg.replace('/20', '')}`} />
-          </div>
-          <p className={`text-xs truncate ${isDark ? 'text-slate-500' : 'text-[#86888A]'}`}>SKU: {item.sku} • {item.system}</p>
-          <div className={`flex items-center gap-1.5 mt-1 text-[11px] font-medium truncate ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-            <MapPin size={12} className="opacity-70 shrink-0" />
-            <span className="truncate">{item.warehouseLocation || 'Kein Lagerort'}</span>
-          </div>
-        </div>
-        
-        <div className="flex items-center justify-between sm:justify-end gap-4 mt-2 sm:mt-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-500/10">
-           <div className={`w-24 py-1 rounded-full ${status.bg} ${status.text} text-[10px] font-bold uppercase tracking-wider shrink-0 text-center`}>
-            {item.stockLevel} STÜCK
-          </div>
-
-          <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-            <button 
-              onClick={() => onClick(item)}
-              className={`p-1.5 rounded-md transition-colors ${isDark ? 'bg-slate-700 hover:bg-[#0077B5] text-slate-300' : 'bg-[#CACCCE]/30 hover:bg-[#0077B5] hover:text-white text-[#313335]'}`}
-              title="Details ansehen"
-            >
-              <Pencil size={14} />
-            </button>
-            <button 
-              onClick={onAddStock}
-              className={`p-1.5 rounded-md transition-colors ${isDark ? 'bg-slate-700 hover:bg-[#0077B5] text-slate-300' : 'bg-[#CACCCE]/30 hover:bg-[#0077B5] hover:text-white text-[#313335]'}`}
-              title="Bestand hinzufügen"
-            >
-              <PackagePlus size={14} />
-            </button>
-            <button 
-              onClick={(e) => handleClick(e, -1)}
-              className={`p-1.5 rounded-md transition-colors ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-300' : 'bg-[#CACCCE]/30 hover:bg-[#CACCCE]/50 text-[#313335]'}`}
-            >
-              <Minus size={14} />
-            </button>
-            <button 
-              onClick={(e) => handleClick(e, 1)}
-              className={`p-1.5 rounded-md transition-colors ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-300' : 'bg-[#CACCCE]/30 hover:bg-[#CACCCE]/50 text-[#313335]'}`}
-            >
-              <Plus size={14} />
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div 
@@ -211,7 +142,7 @@ const InventoryProductCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddS
             </div>
             <div className="flex flex-col gap-1">
                <button 
-                onClick={(e) => handleBulkAdjust(e, 1)}
+                onClick={(e) => handleClick(e, 1)}
                 className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase transition-colors ${
                   isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-300' : 'bg-[#0077B5] hover:bg-[#00A0DC] text-white'
                 }`}
@@ -219,7 +150,7 @@ const InventoryProductCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddS
                 Add
                </button>
                <button 
-                onClick={(e) => handleBulkAdjust(e, -1)}
+                onClick={(e) => handleClick(e, -1)}
                 className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase transition-colors ${
                   isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-300' : 'bg-[#313335] hover:bg-[#000000] text-white'
                 }`}
@@ -232,6 +163,79 @@ const InventoryProductCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddS
       </div>
     </div>
   );
+};
+
+// --- TABLE ROW COMPONENT ---
+const InventoryTableRow: React.FC<StockComponentProps> = ({ item, onUpdate, onAddStock, onLogStock, onClick, theme }) => {
+    const isDark = theme === 'dark';
+    const { bulkInput, setBulkInput, handleClick } = useStockAdjust(item, onUpdate, onLogStock);
+
+    const getStockStatus = () => {
+        if (item.stockLevel <= 0) return { icon: <AlertOctagon size={16}/>, color: 'text-red-500', bg: 'bg-red-500/10 border-red-500/20' };
+        if (item.stockLevel < item.minStock) return { icon: <AlertTriangle size={16}/>, color: 'text-amber-500', bg: 'bg-amber-500/10 border-amber-500/20' };
+        return { icon: <CheckCircle2 size={16}/>, color: 'text-emerald-500', bg: 'bg-emerald-500/10 border-emerald-500/20' };
+    };
+    
+    const status = getStockStatus();
+
+    return (
+        <tr 
+            onClick={() => onClick(item)}
+            className={`group transition-colors border-b last:border-0 cursor-pointer ${
+                isDark 
+                ? 'border-slate-800 hover:bg-slate-800/50' 
+                : 'border-slate-200 hover:bg-slate-50'
+            }`}
+        >
+            <td className="p-4">
+                <div className="flex flex-col">
+                    <span className={`font-bold text-sm ${isDark ? 'text-slate-200' : 'text-slate-900'}`}>{item.name}</span>
+                    {item.manufacturer && (
+                        <span className="text-[10px] text-slate-500 uppercase tracking-wide">{item.manufacturer}</span>
+                    )}
+                </div>
+            </td>
+            <td className="p-4">
+                <span className={`font-mono text-xs px-1.5 py-0.5 rounded border ${isDark ? 'bg-slate-900 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-300 text-slate-600'}`}>
+                    {item.sku}
+                </span>
+            </td>
+            <td className="p-4 text-sm text-slate-500">{item.system}</td>
+            <td className="p-4">
+                <div className="flex items-center gap-1.5 text-sm text-slate-500">
+                    <MapPin size={14} className="opacity-50" />
+                    {item.warehouseLocation || '-'}
+                </div>
+            </td>
+            <td className="p-4">
+                <div className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border text-xs font-bold ${status.bg} ${status.color}`}>
+                    {status.icon}
+                    <span>{item.stockLevel}</span>
+                </div>
+            </td>
+            <td className="p-4" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-end gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
+                        <input 
+                            type="number"
+                            value={bulkInput}
+                            onChange={(e) => setBulkInput(e.target.value)}
+                            placeholder="#"
+                            className="w-10 bg-transparent text-center text-sm outline-none font-medium"
+                        />
+                        <button onClick={(e) => handleClick(e, -1)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-500"><Minus size={14}/></button>
+                        <button onClick={(e) => handleClick(e, 1)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-500"><Plus size={14}/></button>
+                    </div>
+                    <button 
+                        onClick={(e) => { e.stopPropagation(); onClick(item); }}
+                        className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-[#0077B5]"
+                    >
+                        <Pencil size={16} />
+                    </button>
+                </div>
+            </td>
+        </tr>
+    );
 };
 
 // --- MAIN INVENTORY VIEW COMPONENT ---
@@ -340,22 +344,60 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </button>
       </div>
 
-      {/* Content Grid */}
-      <div className={`flex-1 overflow-y-auto min-h-0 pb-20 ${viewMode === 'grid' ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4' : 'flex flex-col gap-2'}`}>
-          {filteredItems.map(item => (
-             <InventoryProductCard 
-                key={item.id} 
-                item={item} 
-                onUpdate={onUpdate} 
-                onAddStock={onAddStock}
-                onLogStock={onLogStock}
-                onClick={handleOpenEditItem}
-                viewMode={viewMode}
-                theme={theme}
-             />
-          ))}
+      {/* Content Area */}
+      <div className="flex-1 overflow-y-auto min-h-0 pb-20">
+          
+          {/* GRID VIEW */}
+          {viewMode === 'grid' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {filteredItems.map(item => (
+                     <InventoryProductCard 
+                        key={item.id} 
+                        item={item} 
+                        onUpdate={onUpdate} 
+                        onAddStock={onAddStock}
+                        onLogStock={onLogStock}
+                        onClick={handleOpenEditItem}
+                        theme={theme}
+                     />
+                  ))}
+              </div>
+          )}
+
+          {/* LIST VIEW (TABLE) */}
+          {viewMode === 'list' && (
+              <div className={`rounded-2xl border overflow-hidden shadow-sm ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                  <table className="w-full text-left text-sm">
+                      <thead className={`border-b ${isDark ? 'bg-slate-950 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
+                          <tr>
+                              <th className="p-4 font-semibold">Artikel</th>
+                              <th className="p-4 font-semibold">SKU</th>
+                              <th className="p-4 font-semibold">System</th>
+                              <th className="p-4 font-semibold">Lagerort</th>
+                              <th className="p-4 font-semibold">Bestand</th>
+                              <th className="p-4 font-semibold text-right">Aktionen</th>
+                          </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-500/10">
+                          {filteredItems.map(item => (
+                             <InventoryTableRow 
+                                key={item.id} 
+                                item={item} 
+                                onUpdate={onUpdate} 
+                                onAddStock={onAddStock}
+                                onLogStock={onLogStock}
+                                onClick={handleOpenEditItem}
+                                theme={theme}
+                             />
+                          ))}
+                      </tbody>
+                  </table>
+              </div>
+          )}
+
+          {/* EMPTY STATE */}
           {filteredItems.length === 0 && (
-              <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-500 opacity-60">
+              <div className="flex flex-col items-center justify-center py-20 text-slate-500 opacity-60">
                   <PackagePlus size={64} className="mb-4 opacity-50" />
                   <p className="text-lg font-medium">Keine Artikel gefunden.</p>
                   <p className="text-sm">Passen Sie Ihre Suche an oder erstellen Sie einen neuen Artikel.</p>

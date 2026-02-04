@@ -1,7 +1,7 @@
 
 import React, { useRef } from 'react';
 import { Theme, StockItem, RawGermanItem } from '../types';
-import { Book, ChevronRight, Moon, Sun, Monitor, Shield, Info, Upload, Trash2, Database, AlertCircle, CheckCircle2, Users, Sidebar, LayoutPanelLeft } from 'lucide-react';
+import { Book, ChevronRight, Moon, Sun, Monitor, Shield, Info, Upload, Trash2, Database, AlertCircle, CheckCircle2, Users, Sidebar, LayoutPanelLeft, List, LayoutGrid } from 'lucide-react';
 
 interface SettingsPageProps {
   theme: Theme;
@@ -12,6 +12,8 @@ interface SettingsPageProps {
   hasCustomData: boolean;
   sidebarMode: 'full' | 'slim';
   onSetSidebarMode: (mode: 'full' | 'slim') => void;
+  inventoryViewMode: 'grid' | 'list';
+  onSetInventoryViewMode: (mode: 'grid' | 'list') => void;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ 
@@ -22,7 +24,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onClearData,
   hasCustomData,
   sidebarMode,
-  onSetSidebarMode
+  onSetSidebarMode,
+  inventoryViewMode,
+  onSetInventoryViewMode
 }) => {
   const isDark = theme === 'dark';
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -106,7 +110,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
       <div className={`rounded-2xl border overflow-hidden mb-8 ${isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}>
         <div className={`px-6 py-3 border-b text-xs font-bold uppercase tracking-wider ${isDark ? 'bg-slate-900 border-slate-800 text-slate-500' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>
-          Allgemein
+          Ansicht & Allgemein
         </div>
         
         <SettingRow 
@@ -147,11 +151,30 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
         <SettingRow 
           icon={<Monitor size={20} />}
-          label="Ansicht"
-          description="Standardansicht für Lagerbestand"
+          label="Artikel-Ansicht"
+          description="Darstellung der Lagerbestandsliste"
           action={
-            <div className={`text-xs font-bold px-3 py-1 rounded-lg ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-600'}`}>
-              Automatisch
+            <div className={`flex p-1 rounded-lg ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                <button 
+                    onClick={() => onSetInventoryViewMode('grid')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-md flex items-center gap-1.5 transition-all ${
+                        inventoryViewMode === 'grid' 
+                        ? 'bg-white text-[#0077B5] shadow-sm border border-[#0077B5]/20 dark:bg-slate-950 dark:text-blue-400 dark:border-blue-500/50' 
+                        : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300 border border-transparent'
+                    }`}
+                >
+                    <LayoutGrid size={14} /> Grid
+                </button>
+                <button 
+                    onClick={() => onSetInventoryViewMode('list')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-md flex items-center gap-1.5 transition-all ${
+                        inventoryViewMode === 'list' 
+                        ? 'bg-white text-[#0077B5] shadow-sm border border-[#0077B5]/20 dark:bg-slate-950 dark:text-blue-400 dark:border-blue-500/50' 
+                        : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300 border border-transparent'
+                    }`}
+                >
+                    <List size={14} /> List
+                </button>
             </div>
           }
         />

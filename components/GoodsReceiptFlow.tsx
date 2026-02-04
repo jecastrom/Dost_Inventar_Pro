@@ -6,7 +6,7 @@ import {
   Hash, Info, CheckCircle2, AlertCircle, ChevronDown, Check,
   ArrowRight, ArrowLeft, Trash2, MapPin, FileText, Building2,
   AlertTriangle, Loader2, Home, ClipboardList, CheckSquare, MessageSquare, Briefcase, Ban, ListFilter,
-  LogOut, PlusCircle
+  LogOut, PlusCircle, XCircle
 } from 'lucide-react';
 import { StockItem, Theme, ReceiptHeader, PurchaseOrder, ReceiptMaster } from '../types';
 import { MOCK_PURCHASE_ORDERS } from '../data';
@@ -49,8 +49,11 @@ interface CartItem {
     orderedQty?: number;
     previouslyReceived?: number; // Track history for cumulative logic
     location: string;
+    // Issue Reporting (Refined)
     isDamaged: boolean;
-    issueNotes: string;
+    isWrongItem: boolean;
+    wrongItemReason: string;
+    issueNotes: string; // Keep for generic notes or compatibility
     showIssueInputs?: boolean; // UI state for toggling visibility
     isManualAddition?: boolean; // Flag for items added manually during PO check
     // Rejection Logic
@@ -280,22 +283,28 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     if (step === 3) {
         let suggested = 'Gebucht';
 
-        // 1. REJECTION CHECK (Priority)
+        // 1. REJECTION CHECK (Priority 4 logic for FULL rejection, but checked early for override)
+        // If ALL items are rejected, status is 'Abgelehnt'
         const allRejected = cart.length > 0 && cart.every(c => c.isRejected);
-        const anyRejected = cart.some(c => c.isRejected);
-
+        
         if (allRejected) {
              suggested = 'Abgelehnt';
-        } else if (anyRejected) {
-             suggested = 'Teillieferung';
         } else {
-             // 2. Normal Logic (if not fully rejected)
-             const hasIssues = cart.some(c => c.isDamaged || (c.issueNotes && c.issueNotes.trim().length > 0));
-             
-             if (hasIssues) {
-                suggested = 'Falsch geliefert'; // Or 'Reklamation'
+             // 2. PRIORITY LOGIC
+             const hasDamage = cart.some(c => c.isDamaged);
+             const hasWrong = cart.some(c => c.isWrongItem);
+
+             if (hasDamage && hasWrong) {
+                 suggested = 'Schaden + Falsch'; // Priority 2
+             } else if (hasDamage) {
+                 suggested = 'Schaden'; // Priority 1
+             } else if (hasWrong) {
+                 suggested = 'Falsch geliefert'; // Priority 3
+             } else if (cart.some(c => c.isRejected)) {
+                 // If not all rejected but some are, usually implies Teillieferung or issues
+                 suggested = 'Teillieferung'; // Priority 5 partial/issues
              } else if (linkedPoId) {
-                // MULTI-DELIVERY LOGIC
+                // MULTI-DELIVERY / QTY LOGIC (Priority 5)
                 const linkedMaster = receiptMasters.find(m => m.poId === linkedPoId);
                 const currentPo = purchaseOrders?.find(p => p.id === linkedPoId);
                 
@@ -303,9 +312,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                     let allItemsComplete = true;
                     let anyOverDelivery = false;
                     
-                    // Iterate over all expected PO items
                     for (const poItem of currentPo.items) {
-                        // 1. Get History Received for this Item
                         let historyQty = 0;
                         if (linkedMaster) {
                             linkedMaster.deliveries.forEach(del => {
@@ -314,10 +321,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                             });
                         }
 
-                        // 2. Get Current Cart Qty for this Item
-                        // CRITICAL: If rejected, count as 0 received for STATUS CALCULATION
                         const cartItem = cart.find(c => c.item.sku === poItem.sku);
-                        // Use Over-Delivery Resolution to determine effective qty
                         let currentQty = 0;
                         if (cartItem && !cartItem.isRejected) {
                             if (cartItem.qty > (cartItem.orderedQty || 0) && cartItem.overDeliveryResolution === 'return') {
@@ -327,7 +331,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                             }
                         }
 
-                        // 3. Total
                         const totalReceived = historyQty + currentQty;
 
                         if (totalReceived < poItem.quantityExpected) {
@@ -340,8 +343,10 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
 
                     if (anyOverDelivery) suggested = 'Übermenge';
                     else if (!allItemsComplete) suggested = 'Teillieferung';
-                    else suggested = 'Gebucht'; // All items complete & no issues
+                    else suggested = 'Gebucht'; // All complete & no issues
                 }
+             } else {
+                 suggested = 'Gebucht';
              }
         }
         
@@ -349,38 +354,25 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     }
   }, [step, cart, linkedPoId, receiptMasters, purchaseOrders]);
 
-  // -- Event Listeners for Portal Dropdowns --
+  // ... (Event Listeners for Portal Dropdowns - Unchanged) ...
   useEffect(() => {
     if (!showSystemDropdown && !showSearchDropdown && !showSupplierDropdown && !showLocationDropdown) return;
-    
     const handleScroll = (e: Event) => {
         if (showSystemDropdown && systemDropdownRef.current && !systemDropdownRef.current.contains(e.target as Node)) setShowSystemDropdown(false);
         if (showSearchDropdown && searchDropdownRef.current && !searchDropdownRef.current.contains(e.target as Node)) setShowSearchDropdown(false);
         if (showSupplierDropdown && supplierDropdownRef.current && !supplierDropdownRef.current.contains(e.target as Node)) setShowSupplierDropdown(false);
         if (showLocationDropdown && locationDropdownRef.current && !locationDropdownRef.current.contains(e.target as Node)) setShowLocationDropdown(false);
     };
-
     const handleResize = () => {
-        setShowSystemDropdown(false); 
-        setShowSupplierDropdown(false);
-        setShowLocationDropdown(false);
+        setShowSystemDropdown(false); setShowSupplierDropdown(false); setShowLocationDropdown(false);
         if (showSearchDropdown && searchInputRef.current) {
              const rect = searchInputRef.current.getBoundingClientRect();
-             setSearchDropdownCoords({
-                top: rect.bottom + window.scrollY,
-                left: rect.left + window.scrollX,
-                width: rect.width
-             });
+             setSearchDropdownCoords({ top: rect.bottom + window.scrollY, left: rect.left + window.scrollX, width: rect.width });
         }
     };
-    
     window.addEventListener('scroll', handleScroll, true); 
     window.addEventListener('resize', handleResize);
-    
-    return () => {
-      window.removeEventListener('scroll', handleScroll, true);
-      window.removeEventListener('resize', handleResize);
-    };
+    return () => { window.removeEventListener('scroll', handleScroll, true); window.removeEventListener('resize', handleResize); };
   }, [showSystemDropdown, showSearchDropdown, showSupplierDropdown, showLocationDropdown]);
 
   useEffect(() => {
@@ -391,11 +383,8 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
       if (showSupplierDropdown && !supplierInputRef.current?.contains(target) && !supplierDropdownRef.current?.contains(target)) setShowSupplierDropdown(false);
       if (showLocationDropdown && !locationInputRef.current?.contains(target) && !locationDropdownRef.current?.contains(target)) setShowLocationDropdown(false);
     };
-
     document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
+    return () => { document.removeEventListener('mousedown', handleClickOutside); };
   }, [showSystemDropdown, showSearchDropdown, showSupplierDropdown, showLocationDropdown]);
 
   // -- Computed Data Helpers --
@@ -439,7 +428,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     ).slice(0, 50); 
   }, [searchTerm, existingItems]);
 
-  // UPDATED: Real-Time Anomaly Detection Logic
+  // Anomaly Logic (Updated for new flags)
   const anomalies = useMemo(() => {
     if (!linkedPoId || cart.length === 0) return { hasMissing: false, hasExtra: false, hasDamage: false, isPerfect: false };
 
@@ -448,13 +437,13 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     let hasDamage = false;
 
     cart.forEach(c => {
-        if (c.isRejected) return; // Skip logic for rejected items as they are outliers
+        if (c.isRejected) return;
         const ordered = c.orderedQty || 0;
         const total = (c.previouslyReceived || 0) + c.qty;
         
         if (total < ordered) hasMissing = true;
         if (total > ordered) hasExtra = true;
-        if (c.isDamaged || (c.issueNotes && c.issueNotes.length > 0)) hasDamage = true;
+        if (c.isDamaged || c.isWrongItem) hasDamage = true;
     });
 
     const isPerfect = !hasMissing && !hasExtra && !hasDamage && !cart.some(c => c.isRejected);
@@ -462,7 +451,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     return { hasMissing, hasExtra, hasDamage, isPerfect };
   }, [cart, linkedPoId]);
 
-  // -- Dynamic Column Logic --
   const showHistoryColumn = useMemo(() => {
       return linkedPoId && cart.some(c => (c.previouslyReceived || 0) > 0);
   }, [linkedPoId, cart]);
@@ -473,9 +461,11 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
       item, 
       qty: 1, 
       orderedQty: linkedPoId ? 0 : undefined,
-      previouslyReceived: 0, // Manual items have no history in this context
+      previouslyReceived: 0,
       location: headerData.warehouseLocation, 
       isDamaged: false, 
+      isWrongItem: false,
+      wrongItemReason: '',
       issueNotes: '',
       showIssueInputs: false,
       isManualAddition: !!linkedPoId,
@@ -493,17 +483,12 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     setCart(prev => prev.map((line, i) => i === index ? { ...line, [field]: value } : line));
   };
 
-  const toggleIssueInputs = (index: number) => {
-    setCart(prev => prev.map((line, i) => i === index ? { ...line, showIssueInputs: !line.showIssueInputs } : line));
-  }
-
   const removeCartItem = (index: number) => {
     setCart(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleCreateNewItem = () => {
     if (!newItemData.name || !newItemData.sku) return;
-    
     const newItem: StockItem = {
       id: crypto.randomUUID(),
       name: newItemData.name || '',
@@ -518,7 +503,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
       status: 'Active',
       lastUpdated: Date.now()
     };
-
     addToCart(newItem);
     setIsCreatingNew(false);
     setNewItemData({ name: '', sku: '', category: 'Material', minStock: 0, system: '' });
@@ -529,7 +513,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     setHeaderData(prev => ({ ...prev, bestellNr: po.id, lieferant: po.supplier }));
     setShowPoModal(false);
 
-    // Calculate History from Receipt Masters
     const linkedMaster = receiptMasters.find(m => m.poId === po.id);
     const historyMap = new Map<string, number>();
     
@@ -542,7 +525,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
         });
     }
 
-    // Populate Cart Items including History
     const newCartItems: CartItem[] = po.items.map(poItem => {
         const inventoryItem = existingItems.find(ex => ex.sku === poItem.sku);
         const historyQty = historyMap.get(poItem.sku) || 0;
@@ -561,12 +543,13 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
         };
         return {
             item,
-            // Pre-calculate remaining based on History vs Ordered
             qty: Math.max(0, poItem.quantityExpected - historyQty), 
-            orderedQty: poItem.quantityExpected, // Total Expected
-            previouslyReceived: historyQty, // Calculated History
+            orderedQty: poItem.quantityExpected,
+            previouslyReceived: historyQty,
             location: headerData.warehouseLocation,
             isDamaged: false,
+            isWrongItem: false,
+            wrongItemReason: '',
             issueNotes: '',
             showIssueInputs: false,
             isManualAddition: false,
@@ -580,7 +563,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     setCart(newCartItems);
   };
 
-  // -- Auto-Select PO on Mount if provided via prop --
   useEffect(() => {
     if (initialPoId && purchaseOrders) {
         const found = availablePOs.find(p => p.id === initialPoId);
@@ -591,23 +573,12 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
   }, []);
 
   // -- SUBMISSION HANDLERS --
-  
-  // 1. Triggered by "Wareneingang buchen" Button
   const handleSubmit = async () => {
     if (!headerData.lieferscheinNr || !headerData.lieferant || cart.length === 0) return;
-
     setSubmissionStatus('submitting');
-    
-    // Status is already auto-calculated in the useEffect for Step 3
-    // We store it for the success message.
     setFinalResultStatus(headerData.status);
-
     try {
-        // Simulate network delay
         await new Promise(resolve => setTimeout(resolve, 600));
-        
-        // DO NOT call props (onSuccess, onLogStock) here.
-        // Wait for user confirmation in the overlay.
         setSubmissionStatus('success');
     } catch (err) {
         console.error("Error saving receipt:", err);
@@ -615,40 +586,39 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     }
   };
 
-  // 2. Triggered by "OK" Button in Success Overlay
   const handleFinalize = () => {
-    // --- DATA PREP (with Cumulative Over-Delivery Logic) ---
-    // Prepare items for Parent (App.tsx)
     const cleanCartItems = cart.map(({ showIssueInputs, isRejected, rejectionReason, overDeliveryResolution, ...rest }) => {
-        let finalQty = rest.qty; // Default: Add what user entered
+        let finalQty = rest.qty;
         let finalNotes = rest.issueNotes || '';
 
-        // Over-Delivery Handling (Cumulative)
+        // Over-Delivery Handling
         const ordered = rest.orderedQty || 0;
         const previous = rest.previouslyReceived || 0;
         const totalAfterReceipt = previous + rest.qty;
         
         if (!isRejected && linkedPoId && totalAfterReceipt > ordered) {
             const over = totalAfterReceipt - ordered;
-            
             if (overDeliveryResolution === 'return') {
-                // If returning surplus, we only book enough to fill the order (or 0 if already full/over)
-                // Cap the addition so that Previous + Added = Ordered
-                // Added = Ordered - Previous
                 finalQty = Math.max(0, ordered - previous); 
-                
                 const methodInfo = rest.returnMethod ? ` via ${rest.returnMethod}` : '';
                 const trackingInfo = rest.returnTrackingId ? ` (ID: ${rest.returnTrackingId})` : '';
                 finalNotes += (finalNotes ? ' | ' : '') + `[AUTO] ${over}x Übermenge abgewiesen${methodInfo}${trackingInfo}`;
             } else {
-                // If accepted, keep full qty input by user
                 finalNotes += (finalNotes ? ' | ' : '') + `[AUTO] ${over}x Übermenge akzeptiert`;
             }
         }
 
+        // Issue Notes Composition
+        if (rest.isWrongItem) {
+            finalNotes += (finalNotes ? ' | ' : '') + `FALSCH: ${rest.wrongItemReason || 'Grund unbekannt'}`;
+        }
+        if (rest.isDamaged) {
+            finalNotes += (finalNotes ? ' | ' : '') + 'BESCHÄDIGT';
+        }
+
         // Rejection Handling
         if (isRejected) {
-            finalQty = 0; // Effectively 0 for stock update
+            finalQty = 0;
             finalNotes = `ABGELEHNT: ${rejectionReason || 'Ohne Grund'}. ${finalNotes}`;
         }
 
@@ -659,60 +629,46 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
         };
     });
 
-    // --- LOGGING LOGIC ---
     if (onLogStock) {
         const selectedPO = purchaseOrders?.find(p => p.id === linkedPoId);
         const source = "PO-" + (selectedPO?.id || "MANUAL");
-        
-        // Context Logic
         let context: 'po-project' | 'po-normal' | 'normal' | 'project' = 'po-normal';
         if (selectedPO) {
             if (selectedPO.status === 'Projekt') {
                 context = 'po-project';
             }
         } else {
-             // Fallback
              context = 'po-normal'; 
         }
 
         cleanCartItems.forEach(c => {
-            if (c.qty > 0) { // Only log positive additions
-                onLogStock(
-                    c.item.sku, // Use SKU as the ID for logging clarity
-                    c.item.name, 
-                    'add', 
-                    c.qty, 
-                    source, 
-                    context
-                );
+            if (c.qty > 0) {
+                onLogStock(c.item.sku, c.item.name, 'add', c.qty, source, context);
             }
         });
     }
 
-    // --- NEW ITEMS ---
     const newItemsCreated = cart
       .filter(c => !c.isRejected) 
       .map(c => c.item)
       .filter(item => !existingItems.find(ex => ex.id === item.id));
 
-    // Ensure we pass the calculated status
     const finalHeader = { ...headerData, status: finalResultStatus };
-    
-    // --- CALL PARENT (NAVIGATE) ---
     onSuccess(finalHeader, cleanCartItems, newItemsCreated);
   };
 
   const getSuccessMessage = () => {
     if (finalResultStatus === 'Abgelehnt') return "Wareneingang wurde als 'Abgelehnt' markiert.";
-    if (finalResultStatus === 'Falsch geliefert') return "Status auf 'Falsch geliefert' gesetzt aufgrund von gemeldeten Problemen.";
+    if (finalResultStatus === 'Schaden') return "Achtung: Wareneingang enthält beschädigte Artikel.";
+    if (finalResultStatus === 'Schaden + Falsch') return "Achtung: Wareneingang enthält beschädigte und falsche Artikel.";
+    if (finalResultStatus === 'Falsch geliefert') return "Status auf 'Falsch geliefert' gesetzt aufgrund von gemeldeten Abweichungen.";
     if (finalResultStatus === 'Teillieferung') return "Teillieferung erfolgreich erfasst. Bestellung bleibt teilweise offen.";
     if (finalResultStatus === 'Übermenge') return "Achtung: Mehr geliefert als bestellt (Übermenge).";
     if (finalResultStatus === 'Gebucht') return "Wareneingang vollständig gebucht. Bestände wurden aktualisiert.";
-    if (finalResultStatus === 'Projekt') return "Positionen dem Projekt zugeordnet. Projektteam wird benachrichtigt.";
     return "Vorgang erfolgreich gespeichert.";
   };
 
-  // Dropdown Position Updaters
+  // ... (Dropdown Position Updaters - Unchanged) ...
   const updateSystemDropdownPosition = () => {
     if (systemInputRef.current) {
       const rect = systemInputRef.current.getBoundingClientRect();
@@ -720,7 +676,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
       setShowSystemDropdown(true);
     }
   };
-
   const updateSearchDropdownPosition = () => {
     if (searchInputRef.current) {
       const rect = searchInputRef.current.getBoundingClientRect();
@@ -728,7 +683,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
       setShowSearchDropdown(true);
     }
   };
-
   const updateSupplierDropdownPosition = () => {
     if (supplierInputRef.current) {
       const rect = supplierInputRef.current.getBoundingClientRect();
@@ -736,7 +690,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
       setShowSupplierDropdown(true);
     }
   };
-
   const updateLocationDropdownPosition = () => {
     if (locationInputRef.current) {
       const rect = locationInputRef.current.getBoundingClientRect();
@@ -776,17 +729,17 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
            {submissionStatus === 'success' && (
              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl flex flex-col items-center text-center animate-in zoom-in-95 slide-in-from-bottom-4 duration-500">
                 <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 ${
-                  ['Teillieferung', 'Falsch geliefert', 'Abgelehnt'].includes(finalResultStatus) 
+                  ['Schaden', 'Schaden + Falsch', 'Falsch geliefert', 'Abgelehnt'].includes(finalResultStatus) 
                     ? 'bg-red-100 dark:bg-red-500/20' 
-                    : ['Übermenge', 'Projekt'].includes(finalResultStatus) 
+                    : ['Teillieferung', 'Übermenge', 'Projekt'].includes(finalResultStatus) 
                       ? 'bg-amber-100 dark:bg-amber-500/20'
                       : 'bg-emerald-100 dark:bg-emerald-500/20'
                 }`}>
-                   {['Teillieferung', 'Falsch geliefert'].includes(finalResultStatus) ? (
+                   {['Schaden', 'Schaden + Falsch', 'Falsch geliefert'].includes(finalResultStatus) ? (
                       <AlertCircle size={48} className="text-red-600 dark:text-red-400" strokeWidth={3} />
                    ) : finalResultStatus === 'Abgelehnt' ? (
                       <Ban size={48} className="text-red-600 dark:text-red-400" strokeWidth={3} />
-                   ) : ['Übermenge'].includes(finalResultStatus) ? (
+                   ) : ['Übermenge', 'Teillieferung'].includes(finalResultStatus) ? (
                       <AlertTriangle size={48} className="text-amber-600 dark:text-amber-400" strokeWidth={3} />
                    ) : finalResultStatus === 'Projekt' ? (
                       <Briefcase size={48} className="text-amber-600 dark:text-amber-400" strokeWidth={3} />
@@ -795,7 +748,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                    )}
                 </div>
                 <h2 className="text-2xl font-bold mb-2 dark:text-white text-slate-900">
-                    Wareneingang erfolgreich gespeichert
+                    Wareneingang gespeichert
                 </h2>
                 <p className="text-slate-500 dark:text-slate-400 mb-8 leading-relaxed">
                    {getSuccessMessage()}
@@ -808,7 +761,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                 </button>
              </div>
            )}
-
+           {/* Error view unchanged */}
            {submissionStatus === 'error' && (
              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl flex flex-col items-center text-center animate-in zoom-in-95 slide-in-from-bottom-4 duration-500">
                 <div className="w-20 h-20 bg-red-100 dark:bg-red-500/20 rounded-full flex items-center justify-center mb-6">
@@ -851,7 +804,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
       </div>
 
       {/* Main Content Area */}
-      
       <div className="flex-1 overflow-y-auto p-5 relative">
         
         {/* STEP 1: KOPFDATEN */}
@@ -861,13 +813,12 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                 <h3 className="text-lg font-bold mb-1">Schritt 1: Lieferung wählen & prüfen</h3>
                 <p className="text-sm opacity-70">Bitte geben Sie die Informationen zum Lieferschein ein.</p>
             </div>
+            {/* ... Step 1 Content identical to previous ... */}
             <div className="grid grid-cols-1 gap-5">
-                {/* PO Selection (Replaced with Modal Trigger) */}
+                {/* PO Selection */}
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-[#0077B5] uppercase tracking-wide">Bestellung auswählen</label>
-                  
                   {linkedPoId ? (
-                      // State B: PO Selected Summary Card
                       <div className={`p-4 rounded-xl border flex items-center justify-between group transition-colors ${isDark ? 'bg-slate-800 border-slate-700 hover:border-[#0077B5]' : 'bg-white border-slate-200 hover:border-[#0077B5]'}`}>
                           <div>
                               <div className="flex items-center gap-2 mb-1">
@@ -886,7 +837,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                           </button>
                       </div>
                   ) : (
-                      // State A: Empty Selection Button
                       <button 
                           onClick={() => setShowPoModal(true)}
                           className={`w-full p-4 rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-2 transition-all hover:border-[#0077B5] group ${isDark ? 'border-slate-700 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'}`}
@@ -900,9 +850,10 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                       </button>
                   )}
                 </div>
-
+                
                 <div className="w-full h-px bg-slate-200 dark:bg-slate-800 my-1" />
 
+                {/* Form Fields */}
                 <div className="space-y-1">
                   <label className="text-xs font-medium opacity-70">Bestell Nr.</label>
                   <div className="relative">
@@ -916,7 +867,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                     />
                   </div>
                 </div>
-
                 <div className="space-y-1">
                   <label className="text-xs font-medium opacity-70">Lieferschein Nr. <span className="text-red-500">*</span></label>
                   <div className="relative">
@@ -930,7 +880,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                     />
                   </div>
                 </div>
-                
                 <div className="space-y-1 relative group">
                   <label className="text-xs font-medium opacity-70">Lieferant <span className="text-red-500">*</span></label>
                   <div className="relative" ref={supplierInputRef}>
@@ -941,9 +890,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                         setHeaderData({...headerData, lieferant: e.target.value});
                         updateSupplierDropdownPosition();
                       }}
-                      onFocus={() => {
-                        if (!linkedPoId) updateSupplierDropdownPosition();
-                      }}
+                      onFocus={() => { if (!linkedPoId) updateSupplierDropdownPosition(); }}
                       className={linkedPoId ? `${readOnlyInputClass} pl-10 pr-8` : `${inputClass} pl-10 pr-8`}
                       placeholder="Lieferant suchen oder neu eingeben..."
                       disabled={!!linkedPoId}
@@ -952,45 +899,23 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                     {showSupplierDropdown && !linkedPoId && filteredSuppliers.length > 0 && createPortal(
                       <div 
                         ref={supplierDropdownRef}
-                        style={{
-                          position: 'absolute',
-                          top: supplierDropdownCoords.top + 4,
-                          left: supplierDropdownCoords.left,
-                          width: supplierDropdownCoords.width,
-                          zIndex: 9999,
-                          maxHeight: '300px'
-                        }}
-                        className={`rounded-xl border shadow-xl overflow-y-auto animate-in fade-in zoom-in-95 duration-100 ${
-                          isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'
-                        }`}
+                        style={{ position: 'absolute', top: supplierDropdownCoords.top + 4, left: supplierDropdownCoords.left, width: supplierDropdownCoords.width, zIndex: 9999, maxHeight: '300px' }}
+                        className={`rounded-xl border shadow-xl overflow-y-auto animate-in fade-in zoom-in-95 duration-100 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'}`}
                       >
                         {filteredSuppliers.map(supplier => (
                           <button
                             key={supplier}
-                            onClick={() => {
-                              setHeaderData({...headerData, lieferant: supplier});
-                              setShowSupplierDropdown(false);
-                            }}
-                            className={`w-full text-left px-4 py-3 text-sm transition-all flex items-center justify-between group/item ${
-                              isDark 
-                                ? 'hover:bg-slate-800 text-slate-200 border-b border-slate-800 last:border-0' 
-                                : 'hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0'
-                            }`}
+                            onClick={() => { setHeaderData({...headerData, lieferant: supplier}); setShowSupplierDropdown(false); }}
+                            className={`w-full text-left px-4 py-3 text-sm transition-all flex items-center justify-between group/item ${isDark ? 'hover:bg-slate-800 text-slate-200 border-b border-slate-800 last:border-0' : 'hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0'}`}
                           >
                             <span>{supplier}</span>
-                            {headerData.lieferant === supplier && (
-                              <div className="bg-[#0077B5]/10 p-1 rounded-full">
-                                <Check size={12} className="text-[#0077B5]" strokeWidth={3} />
-                              </div>
-                            )}
+                            {headerData.lieferant === supplier && (<div className="bg-[#0077B5]/10 p-1 rounded-full"><Check size={12} className="text-[#0077B5]" strokeWidth={3} /></div>)}
                           </button>
                         ))}
-                      </div>,
-                      document.body
+                      </div>, document.body
                     )}
                   </div>
                 </div>
-
                 <div className="grid grid-cols-1 gap-5">
                     <div className="space-y-1">
                       <label className="text-xs font-medium opacity-70">Lieferdatum <span className="text-red-500">*</span></label>
@@ -1005,9 +930,8 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                       </div>
                     </div>
                 </div>
-
                 <div className="space-y-1 relative group">
-                  <label className="text-xs font-medium opacity-70">Ziel-Lagerort (Global für alle Positionen) <span className="text-red-500">*</span></label>
+                  <label className="text-xs font-medium opacity-70">Ziel-Lagerort (Global) <span className="text-red-500">*</span></label>
                   <div className="relative" ref={locationInputRef}>
                     <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 opacity-50" size={16} />
                     <input 
@@ -1027,46 +951,23 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                     {showLocationDropdown && filteredLocations.length > 0 && createPortal(
                       <div 
                         ref={locationDropdownRef}
-                        style={{
-                          position: 'absolute',
-                          top: locationDropdownCoords.top + 4,
-                          left: locationDropdownCoords.left,
-                          width: locationDropdownCoords.width,
-                          zIndex: 99999,
-                          maxHeight: '250px'
-                        }}
-                        className={`rounded-xl border shadow-xl overflow-y-auto animate-in fade-in zoom-in-95 duration-100 ${
-                          isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'
-                        }`}
+                        style={{ position: 'absolute', top: locationDropdownCoords.top + 4, left: locationDropdownCoords.left, width: locationDropdownCoords.width, zIndex: 99999, maxHeight: '250px' }}
+                        className={`rounded-xl border shadow-xl overflow-y-auto animate-in fade-in zoom-in-95 duration-100 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'}`}
                       >
                         {filteredLocations.map(loc => (
                           <button
                             key={loc}
-                            onClick={() => {
-                              setHeaderData({...headerData, warehouseLocation: loc});
-                              setCart(prev => prev.map(item => ({ ...item, location: loc })));
-                              setShowLocationDropdown(false);
-                            }}
-                            className={`w-full text-left px-4 py-3 text-sm transition-all flex items-center justify-between group/item ${
-                              isDark 
-                                ? 'hover:bg-slate-800 text-slate-200 border-b border-slate-800 last:border-0' 
-                                : 'hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0'
-                            }`}
+                            onClick={() => { setHeaderData({...headerData, warehouseLocation: loc}); setCart(prev => prev.map(item => ({ ...item, location: loc }))); setShowLocationDropdown(false); }}
+                            className={`w-full text-left px-4 py-3 text-sm transition-all flex items-center justify-between group/item ${isDark ? 'hover:bg-slate-800 text-slate-200 border-b border-slate-800 last:border-0' : 'hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0'}`}
                           >
                             <span>{loc}</span>
-                            {headerData.warehouseLocation === loc && (
-                              <div className="bg-[#0077B5]/10 p-1 rounded-full">
-                                <Check size={12} className="text-[#0077B5]" strokeWidth={3} />
-                              </div>
-                            )}
+                            {headerData.warehouseLocation === loc && (<div className="bg-[#0077B5]/10 p-1 rounded-full"><Check size={12} className="text-[#0077B5]" strokeWidth={3} /></div>)}
                           </button>
                         ))}
-                      </div>,
-                      document.body
+                      </div>, document.body
                     )}
                   </div>
                 </div>
-
             </div>
           </div>
         )}
@@ -1074,222 +975,96 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
         {/* STEP 2: ARTIKEL HINZUFÜGEN / PRÜFEN */}
         {step === 2 && (
           <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in slide-in-from-right-4">
-             {/* ... Step 2 Content ... */}
+             {/* ... Step 2 Search / Create Logic (Unchanged, skipping verbose parts) ... */}
              <div className="flex justify-between items-end mb-2">
                 <div>
                     <h3 className="text-lg font-bold mb-1">
                         {linkedPoId ? 'Schritt 2: Wareneingang prüfen' : 'Schritt 2: Artikel hinzufügen'}
                     </h3>
                     <p className="text-sm opacity-70">
-                        {linkedPoId 
-                            ? 'Vergleichen Sie die gelieferten Mengen mit der Bestellung.' 
-                            : 'Suchen Sie nach Artikeln oder legen Sie neue an.'}
+                        {linkedPoId ? 'Vergleichen Sie die gelieferten Mengen mit der Bestellung.' : 'Suchen Sie nach Artikeln oder legen Sie neue an.'}
                     </p>
                 </div>
-                <button 
-                   onClick={() => setIsCreatingNew(!isCreatingNew)}
-                   className="text-sm text-[#0077B5] font-bold hover:underline flex items-center gap-1"
-                 >
+                <button onClick={() => setIsCreatingNew(!isCreatingNew)} className="text-sm text-[#0077B5] font-bold hover:underline flex items-center gap-1">
                    <Plus size={16} /> {isCreatingNew ? 'Zurück zur Suche' : 'Neuen Artikel anlegen'}
                  </button>
              </div>
              
-             {/* ... Search / Create Logic (Unchanged) ... */}
+             {/* Search / Create Item Block (Collapsed for brevity as it's unchanged logic) */}
              <div className="space-y-6 relative z-[50]">
-                {/* Search / Create Item Block */}
                 {isCreatingNew ? (
                     <div className={`p-5 rounded-2xl border space-y-4 animate-in slide-in-from-top-2 ${isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
-                       {/* New Item Form */}
                        <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 flex gap-2 items-start text-sm text-blue-600 dark:text-blue-400">
                           <Info size={18} className="shrink-0 mt-0.5" />
                           <span><b>Hinweis:</b> Der neue Artikel wird automatisch mit dem System und Lagerort ({headerData.warehouseLocation}) angelegt.</span>
                        </div>
-
-                       <input 
-                         value={newItemData.name} 
-                         onChange={e => setNewItemData({...newItemData, name: e.target.value})}
-                         placeholder="Artikelbezeichnung" 
-                         className={inputClass}
-                         autoFocus 
-                       />
+                       <input value={newItemData.name} onChange={e => setNewItemData({...newItemData, name: e.target.value})} placeholder="Artikelbezeichnung" className={inputClass} autoFocus />
                        <div className="grid grid-cols-2 gap-4">
-                         <input 
-                           value={newItemData.sku} 
-                           onChange={e => setNewItemData({...newItemData, sku: e.target.value})}
-                           placeholder="Artikelnummer / SKU" 
-                           className={inputClass} 
-                         />
-                         
+                         <input value={newItemData.sku} onChange={e => setNewItemData({...newItemData, sku: e.target.value})} placeholder="Artikelnummer / SKU" className={inputClass} />
                          <div className="relative group" ref={systemInputRef}>
-                            <input 
-                              value={newItemData.system} 
-                              onChange={e => {
-                                setNewItemData({...newItemData, system: e.target.value});
-                                updateSystemDropdownPosition();
-                              }}
-                              onFocus={updateSystemDropdownPosition}
-                              placeholder="System (z.B. BMA)" 
-                              className={`${inputClass} pr-8`} 
-                            />
+                            <input value={newItemData.system} onChange={e => { setNewItemData({...newItemData, system: e.target.value}); updateSystemDropdownPosition(); }} onFocus={updateSystemDropdownPosition} placeholder="System (z.B. BMA)" className={`${inputClass} pr-8`} />
                             <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 opacity-30 pointer-events-none" size={16} />
-                            
                             {showSystemDropdown && filteredSystems.length > 0 && createPortal(
-                              <div 
-                                ref={systemDropdownRef}
-                                style={{
-                                  position: 'absolute',
-                                  top: systemDropdownCoords.top + 4,
-                                  left: systemDropdownCoords.left,
-                                  width: systemDropdownCoords.width,
-                                  zIndex: 9999
-                                }}
-                                className={`max-h-40 overflow-y-auto rounded-xl border shadow-xl animate-in fade-in zoom-in-95 duration-100 ${
-                                  isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'
-                                }`}
-                              >
+                              <div ref={systemDropdownRef} style={{ position: 'absolute', top: systemDropdownCoords.top + 4, left: systemDropdownCoords.left, width: systemDropdownCoords.width, zIndex: 9999 }} className={`max-h-40 overflow-y-auto rounded-xl border shadow-xl animate-in fade-in zoom-in-95 duration-100 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'}`}>
                                 {filteredSystems.map(sys => (
-                                  <button
-                                    key={sys}
-                                    onClick={() => {
-                                      setNewItemData({...newItemData, system: sys});
-                                      setShowSystemDropdown(false);
-                                    }}
-                                    className={`w-full text-left px-4 py-2.5 text-sm transition-all flex items-center justify-between group/item ${
-                                      isDark 
-                                        ? 'hover:bg-slate-800 text-slate-200 border-b border-slate-800 last:border-0' 
-                                        : 'hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0'
-                                    }`}
-                                  >
+                                  <button key={sys} onClick={() => { setNewItemData({...newItemData, system: sys}); setShowSystemDropdown(false); }} className={`w-full text-left px-4 py-2.5 text-sm transition-all flex items-center justify-between group/item ${isDark ? 'hover:bg-slate-800 text-slate-200 border-b border-slate-800 last:border-0' : 'hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0'}`}>
                                     <span>{sys}</span>
-                                    {newItemData.system === sys && (
-                                      <div className="bg-[#0077B5]/10 p-1 rounded-full">
-                                        <Check size={12} className="text-[#0077B5]" strokeWidth={3} />
-                                      </div>
-                                    )}
                                   </button>
                                 ))}
-                              </div>,
-                              document.body
+                              </div>, document.body
                             )}
                          </div>
                        </div>
-                       <button 
-                         onClick={handleCreateNewItem}
-                         disabled={!newItemData.name || !newItemData.sku}
-                         className="w-full py-3 bg-[#0077B5] text-white rounded-xl font-bold text-sm hover:bg-[#00A0DC] disabled:opacity-50 transition-colors shadow-lg shadow-blue-500/20"
-                       >
-                         Artikel erstellen & hinzufügen
-                       </button>
+                       <button onClick={handleCreateNewItem} disabled={!newItemData.name || !newItemData.sku} className="w-full py-3 bg-[#0077B5] text-white rounded-xl font-bold text-sm hover:bg-[#00A0DC] disabled:opacity-50 transition-colors shadow-lg shadow-blue-500/20">Artikel erstellen & hinzufügen</button>
                     </div>
                 ) : (
                     <div className="relative group">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                      <input 
-                        ref={searchInputRef}
-                        value={searchTerm}
-                        onChange={e => handleSearchChange(e.target.value)}
-                        onFocus={() => {
-                            if(searchTerm) updateSearchDropdownPosition();
-                        }}
-                        placeholder="Artikel suchen (Name oder SKU)..."
-                        className={`${inputClass} pl-10 pr-3 py-3`}
-                        autoFocus
-                      />
+                      <input ref={searchInputRef} value={searchTerm} onChange={e => handleSearchChange(e.target.value)} onFocus={() => { if(searchTerm) updateSearchDropdownPosition(); }} placeholder="Artikel suchen (Name oder SKU)..." className={`${inputClass} pl-10 pr-3 py-3`} autoFocus />
                       {showSearchDropdown && searchResults.length > 0 && createPortal(
-                        <div 
-                          ref={searchDropdownRef}
-                          style={{
-                            position: 'absolute',
-                            top: searchDropdownCoords.top + 8,
-                            left: searchDropdownCoords.left,
-                            width: searchDropdownCoords.width,
-                            zIndex: 9999,
-                            maxHeight: '400px'
-                          }}
-                          className={`rounded-xl border shadow-2xl overflow-y-auto animate-in fade-in zoom-in-95 duration-100 ${
-                            isDark 
-                              ? 'bg-[#1e293b] border-slate-600' 
-                              : 'bg-white border-slate-300'
-                          }`}
-                        >
+                        <div ref={searchDropdownRef} style={{ position: 'absolute', top: searchDropdownCoords.top + 8, left: searchDropdownCoords.left, width: searchDropdownCoords.width, zIndex: 9999, maxHeight: '400px' }} className={`rounded-xl border shadow-2xl overflow-y-auto animate-in fade-in zoom-in-95 duration-100 ${isDark ? 'bg-[#1e293b] border-slate-600' : 'bg-white border-slate-300'}`}>
                           {searchResults.map(item => (
-                            <button 
-                              key={item.id}
-                              onClick={() => addToCart(item)}
-                              className={`w-full text-left p-4 flex justify-between items-center border-b last:border-0 transition-colors ${
-                                isDark 
-                                  ? 'border-slate-700 hover:bg-slate-700 text-slate-200' 
-                                  : 'border-slate-100 hover:bg-slate-50 text-slate-800'
-                              }`}
-                            >
-                              <div>
-                                <div className="font-bold text-base">{item.name}</div>
-                                <div className="text-sm opacity-70 mt-0.5">Artikelnummer: {item.sku}</div>
-                                <div className="text-xs opacity-50 mt-0.5">System: {item.system}</div>
-                              </div>
-                              <div className="bg-[#0077B5]/10 p-2 rounded-full">
-                                <Plus size={20} className="text-[#0077B5]" />
-                              </div>
+                            <button key={item.id} onClick={() => addToCart(item)} className={`w-full text-left p-4 flex justify-between items-center border-b last:border-0 transition-colors ${isDark ? 'border-slate-700 hover:bg-slate-700 text-slate-200' : 'border-slate-100 hover:bg-slate-50 text-slate-800'}`}>
+                              <div><div className="font-bold text-base">{item.name}</div><div className="text-sm opacity-70 mt-0.5">Artikelnummer: {item.sku}</div><div className="text-xs opacity-50 mt-0.5">System: {item.system}</div></div>
+                              <div className="bg-[#0077B5]/10 p-2 rounded-full"><Plus size={20} className="text-[#0077B5]" /></div>
                             </button>
                           ))}
-                        </div>,
-                        document.body
+                        </div>, document.body
                       )}
                     </div>
                 )}
              </div>
 
-             {/* Real-Time Feedback Banners (Anomalies) */}
+             {/* Real-Time Feedback Banners */}
              {step === 2 && linkedPoId && (
                 <div className="space-y-3 mb-6 animate-in fade-in slide-in-from-top-2">
-                    {/* Perfect State */}
                     {anomalies.isPerfect && (
-                        <div className={`p-3 rounded-xl border flex items-center gap-3 ${
-                            isDark ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                        }`}>
+                        <div className={`p-3 rounded-xl border flex items-center gap-3 ${isDark ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
                             <CheckCircle2 size={18} />
                             <span className="font-bold text-sm">Alles vollständig – keine Abweichungen.</span>
                         </div>
                     )}
-                    {/* Missing Items Warning (Red) */}
                     {anomalies.hasMissing && (
-                        <div className={`p-4 rounded-xl border flex items-center gap-4 ${
-                            isDark ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-700'
-                        }`}>
-                            <div className={`p-2 rounded-full shrink-0 ${isDark ? 'bg-red-500/20' : 'bg-red-100'}`}>
-                                <AlertTriangle size={24} className={isDark ? 'text-red-400' : 'text-red-600'} />
-                            </div>
-                            <div>
-                                <h4 className="font-bold text-sm">Achtung: Teillieferung erkannt</h4>
-                                <p className="text-xs opacity-90 mt-0.5">Fehlende Mengen werden vermerkt.</p>
-                            </div>
+                        <div className={`p-4 rounded-xl border flex items-center gap-4 ${isDark ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                            <div className={`p-2 rounded-full shrink-0 ${isDark ? 'bg-red-500/20' : 'bg-red-100'}`}><AlertTriangle size={24} className={isDark ? 'text-red-400' : 'text-red-600'} /></div>
+                            <div><h4 className="font-bold text-sm">Achtung: Teillieferung erkannt</h4><p className="text-xs opacity-90 mt-0.5">Fehlende Mengen werden vermerkt.</p></div>
                         </div>
                     )}
-                    {/* Extra Items Warning (Yellow) */}
                     {anomalies.hasExtra && (
-                        <div className={`p-4 rounded-xl border flex items-center gap-4 ${
-                            isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'
-                        }`}>
-                            <div className={`p-2 rounded-full shrink-0 ${isDark ? 'bg-amber-500/20' : 'bg-amber-100'}`}>
-                                <AlertTriangle size={24} className={isDark ? 'text-amber-400' : 'text-amber-600'} />
-                            </div>
-                            <div>
-                                <h4 className="font-bold text-sm">Hinweis: Überlieferung erkannt</h4>
-                                <p className="text-xs opacity-90 mt-0.5">Sie haben mehr erhalten als bestellt. Bitte wählen Sie eine Aktion für die entsprechenden Positionen.</p>
-                            </div>
+                        <div className={`p-4 rounded-xl border flex items-center gap-4 ${isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                            <div className={`p-2 rounded-full shrink-0 ${isDark ? 'bg-amber-500/20' : 'bg-amber-100'}`}><AlertTriangle size={24} className={isDark ? 'text-amber-400' : 'text-amber-600'} /></div>
+                            <div><h4 className="font-bold text-sm">Hinweis: Überlieferung erkannt</h4><p className="text-xs opacity-90 mt-0.5">Sie haben mehr erhalten als bestellt. Bitte wählen Sie eine Aktion für die entsprechenden Positionen.</p></div>
                         </div>
                     )}
                 </div>
              )}
 
-             {/* ADDED ITEMS LIST (CART) - Table Structure Remains Identical */}
+             {/* ADDED ITEMS LIST (CART) */}
              <div className="space-y-3 relative z-0">
                <h4 className="text-sm font-bold opacity-70 uppercase tracking-wider mb-2">Erfasste Positionen ({cart.length})</h4>
                
                {cart.length === 0 ? (
-                 <div className="p-8 border rounded-xl border-dashed text-center text-slate-500">
-                    Noch keine Artikel erfasst.
-                 </div>
+                 <div className="p-8 border rounded-xl border-dashed text-center text-slate-500">Noch keine Artikel erfasst.</div>
                ) : (
                  <>
                    {/* DESKTOP TABLE */}
@@ -1303,14 +1078,17 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                <th className="px-3 py-2 w-24 text-center">{linkedPoId ? (showHistoryColumn ? 'Aktuell' : 'Geliefert') : 'Menge'}</th>
                                {linkedPoId && <th className="px-3 py-2 w-20 text-center text-red-500">Offen</th>}
                                {linkedPoId && <th className="px-3 py-2 w-20 text-center text-amber-500">Zu viel</th>}
-                               <th className="px-3 py-2 w-16 text-center">Problem</th>
+                               
+                               {/* REFINED ISSUE COLUMNS */}
+                               <th className="px-3 py-2 w-16 text-center">Schaden</th>
+                               <th className="px-3 py-2 w-16 text-center">Falsch</th>
+                               
                                <th className="px-3 py-2 w-16 text-center">Abgelehnt</th>
                                <th className="px-3 py-2 w-16 text-center">Aktion</th>
                             </tr>
                          </thead>
                          <tbody className={`divide-y ${isDark ? 'divide-slate-800' : 'divide-slate-100'}`}>
                             {cart.map((line, idx) => {
-                               // --- CUMULATIVE CALCULATION ---
                                const ordered = line.orderedQty ?? 0;
                                const previous = line.previouslyReceived || 0;
                                const current = line.qty;
@@ -1318,17 +1096,14 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                
                                const pending = Math.max(0, ordered - totalReceived);
                                const over = Math.max(0, totalReceived - ordered);
-                               
-                               const hasIssue = line.isDamaged || (line.issueNotes && line.issueNotes.length > 0);
-                               const isRejected = line.isRejected;
-                               const showOverResolution = linkedPoId && over > 0 && !isRejected;
+                               const showOverResolution = linkedPoId && over > 0 && !line.isRejected;
 
                                return (
                                <React.Fragment key={idx}>
-                                   <tr className={`group transition-colors ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'} ${line.showIssueInputs || showOverResolution ? (isDark ? 'bg-slate-800/30' : 'bg-slate-50/80') : ''} ${isRejected ? 'bg-red-500/5' : ''}`}>
+                                   <tr className={`group transition-colors ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'} ${line.isWrongItem || showOverResolution ? (isDark ? 'bg-slate-800/30' : 'bg-slate-50/80') : ''} ${line.isRejected ? 'bg-red-500/5' : ''}`}>
                                       <td className="px-3 py-2">
-                                         <div className={isRejected ? 'opacity-50' : ''}>
-                                            <div className={`font-bold text-sm ${isRejected ? 'line-through text-slate-500' : ''}`}>{line.item.name}</div>
+                                         <div className={line.isRejected ? 'opacity-50' : ''}>
+                                            <div className={`font-bold text-sm ${line.isRejected ? 'line-through text-slate-500' : ''}`}>{line.item.name}</div>
                                             <div className="text-xs opacity-60 font-mono">{line.item.sku} • {line.item.system}</div>
                                             {line.isManualAddition && (
                                                 <div className={`mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border ${isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
@@ -1336,7 +1111,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                                 </div>
                                             )}
                                          </div>
-                                         {isRejected && (
+                                         {line.isRejected && (
                                              <div className="mt-2 animate-in fade-in">
                                                  <input 
                                                      value={line.rejectionReason}
@@ -1350,11 +1125,10 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                       
                                       {linkedPoId && (
                                         <td className="px-3 py-2 text-center">
-                                           <span className={`font-mono opacity-70 text-sm ${isRejected ? 'opacity-50' : ''}`}>{line.orderedQty !== undefined ? line.orderedQty : '-'}</span>
+                                           <span className={`font-mono opacity-70 text-sm ${line.isRejected ? 'opacity-50' : ''}`}>{line.orderedQty !== undefined ? line.orderedQty : '-'}</span>
                                         </td>
                                       )}
 
-                                      {/* Previously Received Column */}
                                       {showHistoryColumn && (
                                           <td className="px-3 py-2 text-center">
                                               <span className={`font-mono text-sm ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
@@ -1369,15 +1143,13 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                            min="0"
                                            value={line.qty === 0 ? '' : line.qty}
                                            placeholder="0"
-                                           disabled={isRejected}
-                                           onKeyDown={(e) => {
-                                             if (["-", "e", "E"].includes(e.key)) e.preventDefault();
-                                           }}
+                                           disabled={line.isRejected}
+                                           onKeyDown={(e) => { if (["-", "e", "E"].includes(e.key)) e.preventDefault(); }}
                                            onChange={e => {
                                              const val = parseInt(e.target.value, 10);
                                              updateCartItem(idx, 'qty', isNaN(val) ? 0 : Math.max(0, val));
                                            }}
-                                           className={`w-20 px-1 py-1 h-8 rounded border text-center font-bold text-sm outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${isRejected ? 'line-through text-slate-400 opacity-50' : ''} ${isDark ? 'bg-slate-950 border-slate-700 focus:ring-blue-500/30' : 'bg-white border-slate-300 focus:ring-[#0077B5]/20'}`}
+                                           className={`w-20 px-1 py-1 h-8 rounded border text-center font-bold text-sm outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${line.isRejected ? 'line-through text-slate-400 opacity-50' : ''} ${isDark ? 'bg-slate-950 border-slate-700 focus:ring-blue-500/30' : 'bg-white border-slate-300 focus:ring-[#0077B5]/20'}`}
                                          />
                                       </td>
 
@@ -1392,33 +1164,57 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                           </td>
                                       )}
 
+                                      {/* SCHADEN (DAMAGE) COLUMN */}
                                       <td className="px-3 py-2 text-center">
-                                         <button 
-                                            onClick={() => toggleIssueInputs(idx)}
-                                            disabled={isRejected}
-                                            className={`p-1.5 rounded-lg transition-all ${
-                                                hasIssue 
-                                                ? 'bg-red-500 text-white shadow-md shadow-red-500/20' 
-                                                : line.showIssueInputs
-                                                    ? 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                                                    : 'text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10'
-                                            } disabled:opacity-30 disabled:cursor-not-allowed`}
-                                            title="Problem melden"
-                                         >
-                                            <AlertTriangle size={16} />
-                                         </button>
-                                      </td>
-
-                                      <td className="px-3 py-2 text-center">
-                                         <label className="flex items-center justify-center cursor-pointer">
+                                         <label className="inline-flex items-center justify-center cursor-pointer">
                                              <input 
                                                  type="checkbox" 
-                                                 checked={isRejected} 
+                                                 checked={line.isDamaged} 
+                                                 disabled={line.isRejected}
+                                                 onChange={(e) => updateCartItem(idx, 'isDamaged', e.target.checked)} 
+                                                 className="hidden"
+                                             />
+                                             <div className={`p-1.5 rounded-lg transition-colors ${
+                                                 line.isDamaged 
+                                                    ? 'bg-red-500 text-white shadow-md shadow-red-500/20' 
+                                                    : 'text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10'
+                                             }`}>
+                                                <AlertTriangle size={16} />
+                                             </div>
+                                         </label>
+                                      </td>
+
+                                      {/* FALSCH (WRONG ITEM) COLUMN */}
+                                      <td className="px-3 py-2 text-center">
+                                         <label className="inline-flex items-center justify-center cursor-pointer">
+                                             <input 
+                                                 type="checkbox" 
+                                                 checked={line.isWrongItem} 
+                                                 disabled={line.isRejected}
+                                                 onChange={(e) => updateCartItem(idx, 'isWrongItem', e.target.checked)} 
+                                                 className="hidden"
+                                             />
+                                             <div className={`p-1.5 rounded-lg transition-colors ${
+                                                 line.isWrongItem 
+                                                    ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20' 
+                                                    : 'text-slate-300 hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-500/10'
+                                             }`}>
+                                                <XCircle size={16} />
+                                             </div>
+                                         </label>
+                                      </td>
+
+                                      {/* REJECTED COLUMN */}
+                                      <td className="px-3 py-2 text-center">
+                                         <label className="inline-flex items-center justify-center cursor-pointer">
+                                             <input 
+                                                 type="checkbox" 
+                                                 checked={line.isRejected} 
                                                  onChange={(e) => updateCartItem(idx, 'isRejected', e.target.checked)} 
                                                  className="hidden"
                                              />
                                              <div className={`p-1.5 rounded-lg transition-colors ${
-                                                 isRejected 
+                                                 line.isRejected 
                                                     ? 'bg-red-500/10 text-red-500 border border-red-500/30' 
                                                     : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
                                              }`}>
@@ -1440,10 +1236,8 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                    {/* Over-Delivery Resolution Row */}
                                    {showOverResolution && (
                                        <tr className={`animate-in fade-in slide-in-from-top-1 ${isDark ? 'bg-amber-500/5' : 'bg-amber-50'}`}>
-                                           <td colSpan={linkedPoId ? (showHistoryColumn ? 9 : 8) : 5} className="px-2 py-2">
+                                           <td colSpan={linkedPoId ? (showHistoryColumn ? 10 : 9) : 6} className="px-2 py-2">
                                                <div className={`flex flex-col gap-3 p-3 rounded-lg border ${isDark ? 'border-amber-500/20' : 'border-amber-200'}`}>
-                                                   
-                                                   {/* Top Row: Info & Action Buttons */}
                                                    <div className="flex flex-col md:flex-row md:items-center gap-3">
                                                        <div className="flex items-center gap-2 text-amber-500">
                                                            <Info size={16} />
@@ -1451,62 +1245,35 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                                        </div>
                                                        <div className="h-4 w-px bg-amber-500/20 hidden md:block"></div>
                                                        <div className="flex items-center gap-2 flex-1">
-                                                           {/* RETURN TOGGLE BUTTON */}
                                                            <button 
                                                                 onClick={() => {
                                                                     const newValue = line.overDeliveryResolution === 'return' ? null : 'return';
                                                                     updateCartItem(idx, 'overDeliveryResolution', newValue);
                                                                 }}
-                                                                className={`flex-1 md:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
-                                                                    line.overDeliveryResolution === 'return'
-                                                                    ? 'bg-amber-600 text-white border-transparent shadow-md shadow-amber-600/20'
-                                                                    : 'bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20'
-                                                                }`}
+                                                                className={`flex-1 md:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${line.overDeliveryResolution === 'return' ? 'bg-amber-600 text-white border-transparent shadow-md shadow-amber-600/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20'}`}
                                                            >
                                                                <LogOut size={14} /> Zurückweisen
                                                            </button>
-                                                           
-                                                           {/* KEEP TOGGLE BUTTON */}
                                                            <button 
                                                                 onClick={() => {
                                                                     const newValue = line.overDeliveryResolution === 'keep' ? null : 'keep';
                                                                     updateCartItem(idx, 'overDeliveryResolution', newValue);
                                                                 }}
-                                                                className={`flex-1 md:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
-                                                                    line.overDeliveryResolution === 'keep'
-                                                                    ? 'bg-emerald-600 text-white border-transparent shadow-md shadow-emerald-600/20'
-                                                                    : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/20'
-                                                                }`}
+                                                                className={`flex-1 md:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${line.overDeliveryResolution === 'keep' ? 'bg-emerald-600 text-white border-transparent shadow-md shadow-emerald-600/20' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/20'}`}
                                                            >
                                                                <PlusCircle size={14} /> Behalten (Akzeptieren)
                                                            </button>
                                                        </div>
                                                    </div>
-
-                                                   {/* Return Logistics Sub-Form (CONDITIONAL: Only show if Return is selected) */}
                                                    {line.overDeliveryResolution === 'return' && (
                                                        <div className={`mt-3 pt-3 border-t border-dashed grid grid-cols-1 md:grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-2 ${isDark ? 'border-amber-500/20' : 'border-amber-200/60'}`}>
                                                            <div className="space-y-1">
-                                                               <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-amber-400/70' : 'text-amber-700/70'}`}>
-                                                                   Rückversand / Abholung *
-                                                               </label>
-                                                               <input 
-                                                                   value={line.returnMethod || ''}
-                                                                   onChange={(e) => updateCartItem(idx, 'returnMethod', e.target.value)}
-                                                                   placeholder="z.B. DHL, Abholung durch Fahrer..."
-                                                                   className={`w-full text-xs px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white placeholder:text-slate-600' : 'bg-white border-amber-200 text-slate-900 placeholder:text-slate-400'}`}
-                                                               />
+                                                               <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-amber-400/70' : 'text-amber-700/70'}`}>Rückversand / Abholung *</label>
+                                                               <input value={line.returnMethod || ''} onChange={(e) => updateCartItem(idx, 'returnMethod', e.target.value)} placeholder="z.B. DHL..." className={`w-full text-xs px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-amber-200 text-slate-900'}`} />
                                                            </div>
                                                            <div className="space-y-1">
-                                                               <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-amber-400/50' : 'text-amber-700/50'}`}>
-                                                                   Tracking Nr. (Optional)
-                                                               </label>
-                                                               <input 
-                                                                   value={line.returnTrackingId || ''}
-                                                                   onChange={(e) => updateCartItem(idx, 'returnTrackingId', e.target.value)}
-                                                                   placeholder="Sendungsnummer..."
-                                                                   className={`w-full text-xs px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white placeholder:text-slate-600' : 'bg-white border-amber-200 text-slate-900 placeholder:text-slate-400'}`}
-                                                               />
+                                                               <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-amber-400/50' : 'text-amber-700/50'}`}>Tracking Nr. (Optional)</label>
+                                                               <input value={line.returnTrackingId || ''} onChange={(e) => updateCartItem(idx, 'returnTrackingId', e.target.value)} placeholder="Sendungsnummer..." className={`w-full text-xs px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-amber-200 text-slate-900'}`} />
                                                            </div>
                                                        </div>
                                                    )}
@@ -1515,34 +1282,22 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                        </tr>
                                    )}
 
-                                   {line.showIssueInputs && !isRejected && (
+                                   {/* WRONG ITEM REASON INPUT - Revealed when 'Falsch' is checked */}
+                                   {line.isWrongItem && !line.isRejected && (
                                        <tr className={`animate-in fade-in slide-in-from-top-1 ${isDark ? 'bg-slate-800/30' : 'bg-slate-50/80'}`}>
-                                           <td colSpan={linkedPoId ? (showHistoryColumn ? 9 : 8) : 5} className="px-2 pb-2 pt-0">
+                                           <td colSpan={linkedPoId ? (showHistoryColumn ? 10 : 9) : 6} className="px-2 pb-2 pt-0">
                                                <div className={`flex items-center gap-3 p-2 rounded-lg border ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'}`}>
-                                                   <label 
-                                                        className={`flex items-center gap-2 cursor-pointer transition-colors px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 ${
-                                                            line.isDamaged 
-                                                                ? 'text-red-600 dark:text-red-400' 
-                                                                : 'text-slate-500'
-                                                        }`}
-                                                   >
-                                                        <div className={`shrink-0 ${line.isDamaged ? 'text-red-500' : 'text-slate-400'}`}>
-                                                            {line.isDamaged ? <CheckSquare size={16} /> : <div className="w-4 h-4 rounded border-2 border-current" />}
-                                                        </div>
-                                                        <input 
-                                                            type="checkbox" 
-                                                            className="hidden" 
-                                                            checked={line.isDamaged} 
-                                                            onChange={(e) => updateCartItem(idx, 'isDamaged', e.target.checked)} 
-                                                        />
-                                                        <span className="font-bold text-xs">Beschädigt</span>
-                                                   </label>
+                                                   <div className="flex items-center gap-2 px-2 py-1 bg-amber-500/10 text-amber-500 rounded border border-amber-500/20 whitespace-nowrap">
+                                                       <XCircle size={16} />
+                                                       <span className="font-bold text-xs">Falsch geliefert</span>
+                                                   </div>
                                                    <div className="h-4 w-px bg-slate-500/20"></div>
                                                    <input 
-                                                       value={line.issueNotes}
-                                                       onChange={(e) => updateCartItem(idx, 'issueNotes', e.target.value)}
-                                                       placeholder="Problembeschreibung (z.B. Falsche Ware)..."
-                                                       className={`flex-1 text-xs px-2 py-1.5 h-8 rounded border outline-none focus:ring-1 focus:ring-red-500 ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-white border-slate-300'}`}
+                                                       value={line.wrongItemReason}
+                                                       onChange={(e) => updateCartItem(idx, 'wrongItemReason', e.target.value)}
+                                                       placeholder="Falscher Artikel / Grund (z.B. falsche Farbe, anderes Modell)..."
+                                                       className={`flex-1 text-xs px-2 py-1.5 h-8 rounded border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-white border-slate-300'}`}
+                                                       autoFocus
                                                    />
                                                </div>
                                            </td>
@@ -1555,202 +1310,76 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                       </table>
                    </div>
 
-                   {/* MOBILE CARDS - Using same data, just different layout */}
+                   {/* MOBILE CARDS - Using same data, updated layout */}
                    <div className="md:hidden space-y-3">
                      {cart.map((line, idx) => {
-                         const hasIssue = line.isDamaged || (line.issueNotes && line.issueNotes.length > 0);
-                         
-                         // --- CUMULATIVE CALCULATION FOR MOBILE ---
                          const ordered = line.orderedQty ?? 0;
                          const previous = line.previouslyReceived || 0;
                          const current = line.qty;
                          const totalReceived = previous + current;
                          const over = Math.max(0, totalReceived - ordered);
-                         
                          const showOverResolution = linkedPoId && over > 0 && !line.isRejected;
 
                          return (
                            <div key={idx} className={`p-4 rounded-xl border flex flex-col gap-3 group ${isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-slate-200 shadow-sm'} ${line.isRejected ? 'bg-red-500/5 border-red-500/20' : ''}`}>
-                              {/* ... Mobile Layout Content ... */}
-                              {/* Content remains visually same as previous implementation */}
                               <div className="flex justify-between items-start">
                                  <div className="min-w-0">
                                     <div className={line.isRejected ? 'opacity-50' : ''}>
                                         <div className={`font-bold text-sm truncate ${line.isRejected ? 'line-through' : ''}`}>{line.item.name}</div>
                                         <div className="text-xs text-slate-500">Artikelnummer: {line.item.sku}</div>
                                         <div className="text-xs text-slate-500 opacity-70">System: {line.item.system}</div>
-                                        {line.isManualAddition && (
-                                            <div className={`mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
-                                                <AlertTriangle size={10} /> Nicht Teil der Bestellung
-                                            </div>
-                                        )}
+                                        {line.isManualAddition && (<div className={`mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}><AlertTriangle size={10} /> Nicht Teil der Bestellung</div>)}
                                     </div>
-                                    {line.isRejected && (
-                                         <div className="mt-2">
-                                             <input 
-                                                 value={line.rejectionReason}
-                                                 onChange={(e) => updateCartItem(idx, 'rejectionReason', e.target.value)}
-                                                 placeholder="Grund für Ablehnung..."
-                                                 className={`w-full px-2 py-1 text-xs rounded border outline-none ${isDark ? 'bg-slate-900 border-red-500/30 text-red-400' : 'bg-white border-red-500/30 text-red-600'}`}
-                                             />
-                                         </div>
-                                     )}
+                                    {line.isRejected && (<div className="mt-2"><input value={line.rejectionReason} onChange={(e) => updateCartItem(idx, 'rejectionReason', e.target.value)} placeholder="Grund für Ablehnung..." className={`w-full px-2 py-1 text-xs rounded border outline-none ${isDark ? 'bg-slate-900 border-red-500/30 text-red-400' : 'bg-white border-red-500/30 text-red-600'}`} /></div>)}
                                  </div>
-                                 <button 
-                                   onClick={() => removeCartItem(idx)}
-                                   className="text-slate-400 hover:text-red-500 p-1"
-                                 >
-                                   <Trash2 size={16} />
-                                 </button>
+                                 <button onClick={() => removeCartItem(idx)} className="text-slate-400 hover:text-red-500 p-1"><Trash2 size={16} /></button>
                               </div>
                               <div className="grid grid-cols-2 gap-3 items-center">
-                                  {linkedPoId && (
-                                    <div className={`text-left ${line.isRejected ? 'opacity-50' : ''}`}>
-                                        <div className="flex flex-col gap-1">
-                                            <div>
-                                                <span className="text-[10px] font-bold opacity-60 uppercase block">Bestellt</span>
-                                                <span className="text-sm font-mono opacity-80">{line.orderedQty !== undefined ? line.orderedQty : '-'}</span>
-                                            </div>
-                                            {(line.previouslyReceived || 0) > 0 && (
-                                                <div>
-                                                    <span className="text-[10px] font-bold opacity-60 uppercase block">Bisher</span>
-                                                    <span className="text-sm font-mono opacity-50">{line.previouslyReceived}</span>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                  )}
-                                  <div className="text-right ml-auto">
-                                     <span className="text-[10px] font-bold opacity-60 uppercase block mb-1">{linkedPoId ? 'Aktuell' : 'Menge'}</span>
-                                     <input 
-                                       type="number" 
-                                       min="0"
-                                       value={line.qty === 0 ? '' : line.qty}
-                                       disabled={line.isRejected}
-                                       placeholder="0"
-                                       onChange={e => {
-                                         const val = parseInt(e.target.value, 10);
-                                         updateCartItem(idx, 'qty', isNaN(val) ? 0 : Math.max(0, val));
-                                       }}
-                                       className={`w-24 px-2 py-2 rounded border text-sm font-bold text-center ${line.isRejected ? 'line-through text-slate-400 opacity-50' : ''} ${isDark ? 'bg-slate-900 border-slate-600' : 'bg-slate-50 border-slate-300'}`}
-                                     />
-                                  </div>
+                                  {linkedPoId && (<div className={`text-left ${line.isRejected ? 'opacity-50' : ''}`}><div className="flex flex-col gap-1"><div><span className="text-[10px] font-bold opacity-60 uppercase block">Bestellt</span><span className="text-sm font-mono opacity-80">{line.orderedQty !== undefined ? line.orderedQty : '-'}</span></div>{(line.previouslyReceived || 0) > 0 && (<div><span className="text-[10px] font-bold opacity-60 uppercase block">Bisher</span><span className="text-sm font-mono opacity-50">{line.previouslyReceived}</span></div>)}</div></div>)}
+                                  <div className="text-right ml-auto"><span className="text-[10px] font-bold opacity-60 uppercase block mb-1">{linkedPoId ? 'Aktuell' : 'Menge'}</span><input type="number" min="0" value={line.qty === 0 ? '' : line.qty} disabled={line.isRejected} placeholder="0" onChange={e => { const val = parseInt(e.target.value, 10); updateCartItem(idx, 'qty', isNaN(val) ? 0 : Math.max(0, val)); }} className={`w-24 px-2 py-2 rounded border text-sm font-bold text-center ${line.isRejected ? 'line-through text-slate-400 opacity-50' : ''} ${isDark ? 'bg-slate-900 border-slate-600' : 'bg-slate-50 border-slate-300'}`} /></div>
                               </div>
 
                               {showOverResolution && (
                                 <div className={`p-3 rounded-lg border flex flex-col gap-3 ${isDark ? 'border-amber-500/20 bg-amber-500/5' : 'border-amber-200 bg-amber-50'}`}>
-                                    <div className="flex items-center gap-2 text-amber-500 mb-1">
-                                        <Info size={14} />
-                                        <span className="text-xs font-bold uppercase">{over} Stück zu viel (Gesamt)</span>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <button 
-                                            onClick={() => {
-                                                const newValue = line.overDeliveryResolution === 'return' ? null : 'return';
-                                                updateCartItem(idx, 'overDeliveryResolution', newValue);
-                                            }}
-                                            className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all ${
-                                                line.overDeliveryResolution === 'return'
-                                                ? 'bg-amber-600 text-white border-transparent shadow-md shadow-amber-600/20'
-                                                : 'bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20'
-                                            }`}
-                                        >
-                                            Zurückweisen
-                                        </button>
-                                        <button 
-                                            onClick={() => {
-                                                const newValue = line.overDeliveryResolution === 'keep' ? null : 'keep';
-                                                updateCartItem(idx, 'overDeliveryResolution', newValue);
-                                            }}
-                                            className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all ${
-                                                line.overDeliveryResolution === 'keep'
-                                                ? 'bg-emerald-600 text-white border-transparent shadow-md shadow-emerald-600/20'
-                                                : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/20'
-                                            }`}
-                                        >
-                                            Behalten
-                                        </button>
-                                    </div>
-
-                                    {/* Mobile Return Logistics Form - CONDITIONAL */}
-                                    {line.overDeliveryResolution === 'return' && (
-                                        <div className={`mt-2 pt-3 border-t border-dashed space-y-3 animate-in fade-in slide-in-from-top-1 ${isDark ? 'border-amber-500/20' : 'border-amber-200/60'}`}>
-                                            <div className="space-y-1">
-                                                <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-amber-400/70' : 'text-amber-700/70'}`}>
-                                                    Rückversand / Abholung *
-                                                </label>
-                                                <input 
-                                                    value={line.returnMethod || ''}
-                                                    onChange={(e) => updateCartItem(idx, 'returnMethod', e.target.value)}
-                                                    placeholder="z.B. DHL, Abholung..."
-                                                    className={`w-full text-xs px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-amber-200 text-slate-900'}`}
-                                                />
-                                            </div>
-                                            <div className="space-y-1">
-                                                <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-amber-400/50' : 'text-amber-700/50'}`}>
-                                                    Tracking Nr. (Optional)
-                                                </label>
-                                                <input 
-                                                    value={line.returnTrackingId || ''}
-                                                    onChange={(e) => updateCartItem(idx, 'returnTrackingId', e.target.value)}
-                                                    placeholder="Sendungsnummer..."
-                                                    className={`w-full text-xs px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-amber-200 text-slate-900'}`}
-                                                />
-                                            </div>
-                                        </div>
-                                    )}
+                                    <div className="flex items-center gap-2 text-amber-500 mb-1"><Info size={14} /><span className="text-xs font-bold uppercase">{over} Stück zu viel (Gesamt)</span></div>
+                                    <div className="flex gap-2"><button onClick={() => updateCartItem(idx, 'overDeliveryResolution', line.overDeliveryResolution === 'return' ? null : 'return')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all ${line.overDeliveryResolution === 'return' ? 'bg-amber-600 text-white border-transparent shadow-md shadow-amber-600/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20'}`}>Zurückweisen</button><button onClick={() => updateCartItem(idx, 'overDeliveryResolution', line.overDeliveryResolution === 'keep' ? null : 'keep')} className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all ${line.overDeliveryResolution === 'keep' ? 'bg-emerald-600 text-white border-transparent shadow-md shadow-emerald-600/20' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/20'}`}>Behalten</button></div>
+                                    {line.overDeliveryResolution === 'return' && (<div className={`mt-2 pt-3 border-t border-dashed space-y-3 animate-in fade-in slide-in-from-top-1 ${isDark ? 'border-amber-500/20' : 'border-amber-200/60'}`}><div className="space-y-1"><label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-amber-400/70' : 'text-amber-700/70'}`}>Rückversand / Abholung *</label><input value={line.returnMethod || ''} onChange={(e) => updateCartItem(idx, 'returnMethod', e.target.value)} placeholder="z.B. DHL..." className={`w-full text-xs px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-amber-200 text-slate-900'}`} /></div><div className="space-y-1"><label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-amber-400/50' : 'text-amber-700/50'}`}>Tracking Nr. (Optional)</label><input value={line.returnTrackingId || ''} onChange={(e) => updateCartItem(idx, 'returnTrackingId', e.target.value)} placeholder="Sendungsnummer..." className={`w-full text-xs px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-amber-200 text-slate-900'}`} /></div></div>)}
                                 </div>
                               )}
 
-                              <div className="flex gap-2">
+                              <div className="grid grid-cols-2 gap-2">
+                                  {/* Damage Toggle */}
                                   <button 
-                                    onClick={() => toggleIssueInputs(idx)}
+                                    onClick={() => updateCartItem(idx, 'isDamaged', !line.isDamaged)}
                                     disabled={line.isRejected}
-                                    className={`flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 border transition-all ${
-                                        hasIssue || line.showIssueInputs
-                                        ? 'bg-red-500/10 border-red-500/30 text-red-500'
-                                        : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
-                                    } disabled:opacity-30`}
+                                    className={`py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 border transition-all ${line.isDamaged ? 'bg-red-500/10 border-red-500/30 text-red-500' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'} disabled:opacity-30`}
                                   >
-                                      <AlertTriangle size={14} /> 
-                                      {line.showIssueInputs ? 'Verbergen' : hasIssue ? 'Problem' : 'Problem?'}
+                                      <AlertTriangle size={14} /> Schaden
                                   </button>
                                   
+                                  {/* Wrong Item Toggle */}
                                   <button 
-                                      onClick={() => updateCartItem(idx, 'isRejected', !line.isRejected)}
-                                      className={`flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 border transition-all ${
-                                          line.isRejected 
-                                            ? 'bg-red-500 text-white border-red-600' 
-                                            : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
-                                      }`}
+                                    onClick={() => updateCartItem(idx, 'isWrongItem', !line.isWrongItem)}
+                                    disabled={line.isRejected}
+                                    className={`py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 border transition-all ${line.isWrongItem ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'} disabled:opacity-30`}
                                   >
-                                      <Ban size={14} />
-                                      {line.isRejected ? 'Abgelehnt' : 'Ablehnen'}
+                                      <XCircle size={14} /> Falsch
                                   </button>
                               </div>
-                              {line.showIssueInputs && !line.isRejected && (
+                              
+                              <button 
+                                  onClick={() => updateCartItem(idx, 'isRejected', !line.isRejected)}
+                                  className={`w-full py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 border transition-all ${line.isRejected ? 'bg-red-500 text-white border-red-600' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+                              >
+                                  <Ban size={14} /> {line.isRejected ? 'Abgelehnt' : 'Ablehnen'}
+                              </button>
+
+                              {line.isWrongItem && !line.isRejected && (
                                   <div className={`p-3 rounded-lg border space-y-3 animate-in fade-in slide-in-from-top-1 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
                                        <div>
-                                           <label className="text-xs font-bold uppercase text-slate-500 mb-1 block">Bemerkung / Fehler</label>
-                                           <input 
-                                                value={line.issueNotes}
-                                                onChange={(e) => updateCartItem(idx, 'issueNotes', e.target.value)}
-                                                className={`w-full text-sm p-2 rounded-lg border outline-none focus:ring-1 focus:ring-red-500 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-300'}`}
-                                                placeholder="..."
-                                           />
+                                           <label className="text-xs font-bold uppercase text-slate-500 mb-1 block">Falscher Artikel / Grund</label>
+                                           <input value={line.wrongItemReason} onChange={(e) => updateCartItem(idx, 'wrongItemReason', e.target.value)} className={`w-full text-sm p-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-300'}`} placeholder="z.B. Falsche Farbe..." />
                                        </div>
-                                       <label className="flex items-center gap-2 cursor-pointer">
-                                           <input 
-                                                type="checkbox" 
-                                                className="hidden" 
-                                                checked={line.isDamaged} 
-                                                onChange={(e) => updateCartItem(idx, 'isDamaged', e.target.checked)} 
-                                           />
-                                           <div className={`shrink-0 ${line.isDamaged ? 'text-red-500' : 'text-slate-400'}`}>
-                                                {line.isDamaged ? <CheckSquare size={18} /> : <div className="w-[18px] h-[18px] rounded border-2 border-current" />}
-                                           </div>
-                                           <span className={`text-sm font-bold ${line.isDamaged ? 'text-red-500' : 'text-slate-500'}`}>Ware beschädigt</span>
-                                       </label>
                                   </div>
                               )}
                            </div>
@@ -1766,26 +1395,24 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
         {/* STEP 3: ABSCHLUSS & ZUSAMMENFASSUNG */}
         {step === 3 && (
           <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in slide-in-from-right-4">
-             {/* ... Step 3 Content (Summary) ... */}
-             {/* Retaining existing step 3 layout */}
             <div className="mb-4">
                 <h3 className="text-lg font-bold mb-1">Schritt 3: Überprüfung & Abschluss</h3>
                 <p className="text-sm opacity-70">Bitte überprüfen Sie die Angaben vor der Buchung.</p>
             </div>
 
             <div className={`p-4 rounded-xl border flex items-center gap-4 ${
-                ['Gebucht'].includes(headerData.status) 
-                    ? isDark ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                    : ['Übermenge'].includes(headerData.status) 
+                ['Schaden', 'Schaden + Falsch', 'Falsch geliefert', 'Abgelehnt'].includes(headerData.status) 
+                    ? isDark ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-700'
+                    : ['Teillieferung', 'Übermenge'].includes(headerData.status) 
                         ? isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'
-                        : isDark ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-700'
+                        : isDark ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
             }`}>
                 <div className={`p-2 rounded-full shrink-0 ${
-                    ['Gebucht'].includes(headerData.status) 
-                        ? isDark ? 'bg-emerald-500/20' : 'bg-emerald-100'
-                        : ['Übermenge'].includes(headerData.status) 
+                    ['Schaden', 'Schaden + Falsch', 'Falsch geliefert', 'Abgelehnt'].includes(headerData.status) 
+                        ? isDark ? 'bg-red-500/20' : 'bg-red-100'
+                        : ['Teillieferung', 'Übermenge'].includes(headerData.status) 
                             ? isDark ? 'bg-amber-500/20' : 'bg-amber-100'
-                            : isDark ? 'bg-red-500/20' : 'bg-red-100'
+                            : isDark ? 'bg-emerald-500/20' : 'bg-emerald-100'
                 }`}>
                     {['Gebucht'].includes(headerData.status) ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
                 </div>
@@ -1794,44 +1421,22 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                     <p className="text-sm opacity-90 mt-0.5">
                         {headerData.status === 'Gebucht' ? 'Wareneingang ist vollständig und fehlerfrei.' :
                          headerData.status === 'Abgelehnt' ? 'Die gesamte Lieferung wurde abgelehnt.' :
-                         headerData.status === 'Teillieferung' ? 'Die Lieferung ist unvollständig oder teilweise abgelehnt.' :
+                         headerData.status === 'Schaden' ? 'Es wurden beschädigte Artikel gemeldet.' :
+                         headerData.status === 'Falsch geliefert' ? 'Es wurden falsche Artikel gemeldet.' :
+                         headerData.status === 'Schaden + Falsch' ? 'Kombinierte Probleme (Schaden & Falschlieferung).' :
                          headerData.status === 'Übermenge' ? 'Es wurde mehr geliefert als bestellt.' :
-                         'Probleme erkannt (Beschädigung oder falsche Lieferung).'}
+                         'Lieferung unvollständig oder teilweise abgelehnt.'}
                     </p>
                 </div>
             </div>
 
             <div className={`p-4 rounded-xl border ${isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 text-sm">
-                    {/* ... Header Metadata Summary ... */}
-                    <div>
-                        <div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Lieferschein</div>
-                        <div className="font-bold text-base">{headerData.lieferscheinNr}</div>
-                    </div>
-                    <div>
-                        <div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Datum</div>
-                        <div className="font-medium flex items-center gap-2">
-                            <Calendar size={14} className="opacity-70" /> {new Date(headerData.lieferdatum).toLocaleDateString()}
-                        </div>
-                    </div>
-                    <div>
-                        <div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Lieferant</div>
-                        <div className="font-medium flex items-center gap-2 truncate">
-                            <Truck size={14} className="opacity-70 text-[#0077B5]" /> {headerData.lieferant}
-                        </div>
-                    </div>
-                    <div>
-                        <div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Ziel-Lagerort</div>
-                        <div className="font-medium flex items-center gap-2 truncate">
-                            <MapPin size={14} className="opacity-70" /> {headerData.warehouseLocation}
-                        </div>
-                    </div>
-                    {headerData.bestellNr && (
-                        <div className="col-span-2 md:col-span-4 border-t border-slate-500/10 pt-2 mt-1">
-                            <div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Verknüpfte Bestellung</div>
-                            <div className="font-mono font-bold text-[#0077B5] text-sm">{headerData.bestellNr}</div>
-                        </div>
-                    )}
+                    <div><div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Lieferschein</div><div className="font-bold text-base">{headerData.lieferscheinNr}</div></div>
+                    <div><div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Datum</div><div className="font-medium flex items-center gap-2"><Calendar size={14} className="opacity-70" /> {new Date(headerData.lieferdatum).toLocaleDateString()}</div></div>
+                    <div><div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Lieferant</div><div className="font-medium flex items-center gap-2 truncate"><Truck size={14} className="opacity-70 text-[#0077B5]" /> {headerData.lieferant}</div></div>
+                    <div><div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Ziel-Lagerort</div><div className="font-medium flex items-center gap-2 truncate"><MapPin size={14} className="opacity-70" /> {headerData.warehouseLocation}</div></div>
+                    {headerData.bestellNr && (<div className="col-span-2 md:col-span-4 border-t border-slate-500/10 pt-2 mt-1"><div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Verknüpfte Bestellung</div><div className="font-mono font-bold text-[#0077B5] text-sm">{headerData.bestellNr}</div></div>)}
                 </div>
             </div>
 
@@ -1857,14 +1462,8 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                             <div className="text-[10px] opacity-60 font-mono">{line.item.sku}</div>
                                             <div className="text-[10px] text-red-500 font-bold mt-0.5">Grund: {line.rejectionReason || 'Nicht angegeben'}</div>
                                         </td>
-                                        <td colSpan={linkedPoId ? 4 : 1} className="px-3 py-2 text-center font-mono text-xs opacity-50">
-                                            - Abgelehnt -
-                                        </td>
-                                        <td className="px-3 py-2 text-center">
-                                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-500/10 text-red-500 text-xs font-bold border border-red-500/20">
-                                                <Ban size={12} /> Abgelehnt
-                                            </span>
-                                        </td>
+                                        <td colSpan={linkedPoId ? 4 : 1} className="px-3 py-2 text-center font-mono text-xs opacity-50">- Abgelehnt -</td>
+                                        <td className="px-3 py-2 text-center"><span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-500/10 text-red-500 text-xs font-bold border border-red-500/20"><Ban size={12} /> Abgelehnt</span></td>
                                     </tr>
                                 );
                             }
@@ -1873,81 +1472,34 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                             const received = line.qty;
                             const pending = Math.max(0, ordered - received);
                             const over = Math.max(0, received - ordered);
-                            const hasIssue = line.isDamaged || (line.issueNotes && line.issueNotes.length > 0);
-
+                            
                             return (
                                 <tr key={idx} className={isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}>
                                     <td className="px-3 py-2">
                                         <div className="font-bold text-sm">{line.item.name}</div>
                                         <div className="text-[10px] opacity-60 font-mono">{line.item.sku}</div>
-                                        {line.isManualAddition && (
-                                            <div className={`mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border ${isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
-                                                <AlertTriangle size={8} /> Manuell
-                                            </div>
-                                        )}
-                                        {line.overDeliveryResolution === 'return' && over > 0 && (
-                                            <div className="text-[10px] text-amber-600 font-bold mt-0.5 flex items-center gap-1">
-                                                <LogOut size={10} /> {over}x Rücksendung
-                                            </div>
-                                        )}
-                                        {line.overDeliveryResolution === 'keep' && over > 0 && (
-                                            <div className="text-[10px] text-emerald-600 font-bold mt-0.5 flex items-center gap-1">
-                                                <PlusCircle size={10} /> {over}x Akzeptiert
-                                            </div>
-                                        )}
+                                        {line.isManualAddition && (<div className={`mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border ${isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}><AlertTriangle size={8} /> Manuell</div>)}
+                                        {line.overDeliveryResolution === 'return' && over > 0 && (<div className="text-[10px] text-amber-600 font-bold mt-0.5 flex items-center gap-1"><LogOut size={10} /> {over}x Rücksendung</div>)}
+                                        {line.overDeliveryResolution === 'keep' && over > 0 && (<div className="text-[10px] text-emerald-600 font-bold mt-0.5 flex items-center gap-1"><PlusCircle size={10} /> {over}x Akzeptiert</div>)}
                                     </td>
-                                    {linkedPoId && (
-                                        <td className="px-3 py-2 text-center font-mono opacity-70 text-sm">
-                                            {ordered > 0 ? ordered : '-'}
-                                        </td>
-                                    )}
-                                    <td className="px-3 py-2 text-center font-bold text-sm">
-                                        {line.qty}
-                                    </td>
-                                    {linkedPoId && (
-                                        <td className="px-3 py-2 text-center font-bold text-red-500 text-sm">
-                                            {pending > 0 ? pending : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}
-                                        </td>
-                                    )}
-                                    {linkedPoId && (
-                                        <td className="px-3 py-2 text-center font-bold text-amber-500 text-sm">
-                                            {over > 0 ? over : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}
-                                        </td>
-                                    )}
+                                    {linkedPoId && <td className="px-3 py-2 text-center font-mono opacity-70 text-sm">{ordered > 0 ? ordered : '-'}</td>}
+                                    <td className="px-3 py-2 text-center font-bold text-sm">{line.qty}</td>
+                                    {linkedPoId && <td className="px-3 py-2 text-center font-bold text-red-500 text-sm">{pending > 0 ? pending : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}</td>}
+                                    {linkedPoId && <td className="px-3 py-2 text-center font-bold text-amber-500 text-sm">{over > 0 ? over : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}</td>}
                                     <td className="px-3 py-2 text-center">
                                         {(() => {
-                                            if (hasIssue) return (
-                                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-500/10 text-red-500 text-xs font-bold border border-red-500/20">
-                                                    <AlertTriangle size={12} /> Problem
-                                                </span>
-                                            );
+                                            if (line.isDamaged && line.isWrongItem) return <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-500/10 text-red-500 text-xs font-bold border border-red-500/20"><AlertTriangle size={12} /> Schaden+Falsch</span>;
+                                            if (line.isDamaged) return <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-500/10 text-red-500 text-xs font-bold border border-red-500/20"><AlertTriangle size={12} /> Beschädigt</span>;
+                                            if (line.isWrongItem) return <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-amber-500/10 text-amber-500 text-xs font-bold border border-amber-500/20"><XCircle size={12} /> Falsch</span>;
+                                            
                                             if (linkedPoId) {
-                                                if (received < ordered) return (
-                                                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'}`}>
-                                                        <AlertTriangle size={12} /> Fehlmenge
-                                                    </span>
-                                                );
+                                                if (received < ordered) return <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'}`}><AlertTriangle size={12} /> Fehlmenge</span>;
                                                 if (received > ordered) {
-                                                    // Determine label based on action
-                                                    if (line.overDeliveryResolution === 'return') {
-                                                        return (
-                                                            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'}`}>
-                                                                <LogOut size={12} /> Rücksendung
-                                                            </span>
-                                                        );
-                                                    }
-                                                    return (
-                                                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'}`}>
-                                                            <Info size={12} /> Übermenge
-                                                        </span>
-                                                    );
+                                                    if (line.overDeliveryResolution === 'return') return <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'}`}><LogOut size={12} /> Rücksendung</span>;
+                                                    return <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'}`}><Info size={12} /> Übermenge</span>;
                                                 }
                                             }
-                                            return (
-                                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-500/10 text-emerald-500 text-xs font-bold border border-emerald-500/20">
-                                                    <Check size={12} /> OK
-                                                </span>
-                                            );
+                                            return <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-500/10 text-emerald-500 text-xs font-bold border border-emerald-500/20"><Check size={12} /> OK</span>;
                                         })()}
                                     </td>
                                 </tr>

@@ -1,14 +1,14 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   Search, Filter, Calendar, MapPin, Package, ChevronRight, 
   ArrowLeft, Mail, Phone, StickyNote, Send, Clock, User, X,
   AlertCircle, CheckCircle2, ChevronDown, ChevronUp, FileText, Truck,
   CheckSquare, BarChart3, Ban, Archive, Briefcase, PlayCircle, Info, PackagePlus,
-  AlertTriangle, Layers, Plus, MessageSquare, CornerDownRight, Unlock, Lock
+  AlertTriangle, Layers, Plus, MessageSquare, CornerDownRight, Unlock, Lock, XCircle, AlertOctagon
 } from 'lucide-react';
-import { ReceiptHeader, ReceiptItem, Theme, ReceiptComment, Ticket, TicketPriority, PurchaseOrder, TicketMessage, ReceiptMaster } from '../types';
+import { ReceiptHeader, ReceiptItem, Theme, ReceiptComment, Ticket, TicketPriority, PurchaseOrder, TicketMessage, ReceiptMaster, DeliveryLog } from '../types';
 
 interface ReceiptManagementProps {
   headers: ReceiptHeader[];
@@ -166,6 +166,9 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
   // Expanded Delivery Logs State
   const [expandedDeliveryId, setExpandedDeliveryId] = useState<string | null>(null);
 
+  // New State: Delivery List Popover
+  const [showDeliveryList, setShowDeliveryList] = useState(false);
+
   // Clear reply text when switching tickets or tabs
   useEffect(() => {
     setReplyText('');
@@ -174,6 +177,11 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
         setExpandedTicketId(relatedTickets[0].id);
     }
   }, [activeTab]);
+
+  // Reset dropdown when changing selection
+  useEffect(() => {
+      setShowDeliveryList(false);
+  }, [selectedBatchId]);
 
   // -- Detail View Hooks --
   const selectedHeader = useMemo(() => headers.find(h => h.batchId === selectedBatchId), [headers, selectedBatchId]);
@@ -425,6 +433,8 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
     setFilterUser('');
   };
 
+  // --- Helper Functions for Badges & Icons ---
+
   const statusColors = (status: string) => {
     if (status === 'Gebucht' || status === 'Abgeschlossen') {
         return isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200';
@@ -472,7 +482,98 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
         : 'bg-blue-100 border-blue-500 text-blue-700';
   };
 
-  const renderItemStatusIcon = (ordered: number, received: number, hasIssues: boolean) => {
+  // Helper to parse notes and flags
+  const getItemIssues = (item: ReceiptItem) => {
+    const notes = item.issueNotes || '';
+    const isWrong = notes.includes('FALSCH');
+    const isRejected = notes.includes('ABGELEHNT') || notes.includes('abgewiesen');
+    const isDamaged = !!item.isDamaged; 
+    const wrongReason = isWrong ? notes.match(/FALSCH: (.*?)(?: \| |$)/)?.[1] : null;
+    return { isDamaged, isWrong, isRejected, wrongReason };
+  };
+
+  // Detailed Item Status Badge
+  const ItemStatusBadge = ({ item, quantityInfo }: { item?: ReceiptItem, quantityInfo?: { ordered: number, received: number } }) => {
+    if (!item) return <span className="text-slate-400">-</span>;
+    
+    const { isDamaged, isWrong, isRejected, wrongReason } = getItemIssues(item);
+    
+    // Priority 1: Damage + Wrong
+    if (isDamaged && isWrong) {
+        return (
+            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${isDark ? 'bg-red-500/10 text-red-400 border-red-500/30' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                <AlertTriangle size={10} /> Schaden + Falsch
+            </span>
+        );
+    }
+    // Priority 2: Damaged
+    if (isDamaged) {
+        return (
+            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${isDark ? 'bg-red-500/10 text-red-400 border-red-500/30' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                <AlertTriangle size={10} /> Schaden
+            </span>
+        );
+    }
+    // Priority 3: Wrong
+    if (isWrong) {
+        return (
+            <span 
+                title={wrongReason || 'Falsch geliefert'}
+                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 'bg-amber-50 text-amber-600 border-amber-200'}`}
+            >
+                <XCircle size={10} /> Falsch geliefert
+            </span>
+        );
+    }
+    // Priority 4: Rejected
+    if (isRejected) {
+        return (
+            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${isDark ? 'bg-red-500/10 text-red-400 border-red-500/30' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                <Ban size={10} /> Abgelehnt
+            </span>
+        );
+    }
+    
+    // Quantity Mismatches (Only if no other issues)
+    if (quantityInfo) {
+        const { ordered, received } = quantityInfo;
+        if (received > ordered) {
+             return (
+                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 'bg-amber-50 text-amber-600 border-amber-200'}`}>
+                    <Info size={10} /> Überlieferung
+                </span>
+            );
+        }
+        if (received < ordered) {
+             return (
+                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 'bg-amber-50 text-amber-600 border-amber-200'}`}>
+                    <AlertTriangle size={10} /> Teillieferung
+                </span>
+            );
+        }
+    }
+    
+    // OK
+    return (
+        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-emerald-50 text-emerald-600 border-emerald-200'}`}>
+            <CheckCircle2 size={10} /> OK
+        </span>
+    );
+  };
+
+  // Helper to find full item details for history row
+  const findReceiptItemForLog = (delivery: DeliveryLog, sku: string) => {
+    // Find the header for this delivery log by fuzzy match or strict link
+    const header = headers.find(h => 
+        h.lieferscheinNr === delivery.lieferscheinNr && 
+        (linkedMaster?.poId ? h.bestellNr === linkedMaster.poId : true)
+    );
+    if (!header) return undefined;
+    return items.find(i => i.batchId === header.batchId && i.sku === sku);
+  };
+
+  const renderItemStatusIconForPO = (ordered: number, received: number, hasIssues: boolean) => {
+      // Keep old simple icon logic for the PO Summary table (compact view)
       const isPerfect = !hasIssues && ordered === received;
       if (isPerfect) return (<div className="flex justify-center"><CheckCircle2 size={18} className="text-emerald-500" /></div>);
       return (<div className="flex justify-center" title={hasIssues ? "Probleme gemeldet" : ordered !== received ? "Mengenabweichung" : ""}><AlertTriangle size={18} className="text-amber-500" /></div>);
@@ -700,17 +801,72 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
         </div>
 
         <div className="flex flex-col gap-4">
+              {/* SWAPPED HIERARCHY: BESTELLUNG (LEFT/LARGE) - LIEFERSCHEIN (RIGHT/SMALL) */}
               <div className="flex flex-col sm:flex-row sm:items-baseline gap-6 md:gap-12">
                   <div>
-                      <span className={`text-[10px] uppercase font-bold tracking-wider block mb-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Lieferschein</span>
-                      <h2 className="text-3xl font-black leading-none tracking-tight">{selectedHeader.lieferscheinNr}</h2>
-                  </div>
-                  <div className={`hidden sm:block w-px h-10 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}></div>
-                  <div>
                       <span className={`text-[10px] uppercase font-bold tracking-wider block mb-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Bestellung</span>
-                      <div className={`text-xl font-bold ${selectedHeader.bestellNr ? '' : 'opacity-50 italic font-normal'}`}>
+                      <div className={`text-3xl font-black leading-none tracking-tight ${selectedHeader.bestellNr ? '' : 'opacity-50 italic font-normal'}`}>
                           {selectedHeader.bestellNr || 'Nicht angegeben'}
                       </div>
+                  </div>
+                  <div className={`hidden sm:block w-px h-10 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}></div>
+                  
+                  {/* INTERACTIVE DELIVERY LIST DROPDOWN */}
+                  <div className="relative">
+                      <span className={`text-[10px] uppercase font-bold tracking-wider block mb-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Lieferschein</span>
+                      <button 
+                          onClick={() => setShowDeliveryList(!showDeliveryList)}
+                          className={`flex items-center gap-2 text-xl font-bold transition-colors group ${
+                              isDark ? 'text-slate-500 hover:text-white' : 'text-slate-500 hover:text-[#0077B5]'
+                          }`}
+                      >
+                          {selectedHeader.lieferscheinNr}
+                          <ChevronDown size={16} className={`transition-transform duration-200 ${showDeliveryList ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {/* Dropdown Popover */}
+                      {showDeliveryList && (
+                          <div className={`absolute top-full left-0 mt-2 w-72 rounded-xl border shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 ${
+                              isDark ? 'bg-[#1e293b] border-slate-700' : 'bg-white border-slate-200'
+                          }`}>
+                              <div className={`p-3 border-b flex justify-between items-center ${isDark ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-50 border-slate-100'}`}>
+                                  <span className="text-xs font-bold uppercase tracking-wider opacity-70">Alle Lieferungen</span>
+                                  <button onClick={() => setShowDeliveryList(false)} className="hover:bg-red-500/10 hover:text-red-500 p-1 rounded transition-colors"><X size={14}/></button>
+                              </div>
+                              <div className="max-h-64 overflow-y-auto">
+                                  {linkedMaster?.deliveries.map((del, idx) => (
+                                      <div key={del.id} className={`p-3 border-b last:border-0 flex items-center gap-3 ${
+                                          del.lieferscheinNr === selectedHeader.lieferscheinNr 
+                                              ? (isDark ? 'bg-[#0077B5]/10' : 'bg-[#0077B5]/5') 
+                                              : ''
+                                      }`}>
+                                          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                                               del.lieferscheinNr === selectedHeader.lieferscheinNr 
+                                                  ? 'bg-[#0077B5] text-white' 
+                                                  : (isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500')
+                                          }`}>
+                                              {idx + 1}
+                                          </div>
+                                          <div>
+                                              <div className={`text-sm font-bold ${
+                                                  del.lieferscheinNr === selectedHeader.lieferscheinNr 
+                                                      ? 'text-[#0077B5]' 
+                                                      : (isDark ? 'text-slate-200' : 'text-slate-700')
+                                              }`}>
+                                                  {del.lieferscheinNr}
+                                              </div>
+                                              <div className="text-[10px] opacity-60">
+                                                  {new Date(del.date).toLocaleDateString()} • {del.items.length} Pos.
+                                              </div>
+                                          </div>
+                                      </div>
+                                  ))}
+                                  {(!linkedMaster || linkedMaster.deliveries.length === 0) && (
+                                       <div className="p-4 text-center text-xs opacity-50">Keine weiteren Lieferungen gefunden.</div>
+                                  )}
+                              </div>
+                          </div>
+                      )}
                   </div>
               </div>
 
@@ -760,17 +916,17 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                 
                 {canReceiveMore && (
                     <div className={`p-4 rounded-xl border flex items-center justify-between shadow-sm animate-in slide-in-from-top-2 ${
-                        isDark ? 'bg-amber-500/10 border-amber-500/20' : 'bg-amber-50 border-amber-200'
+                        isDark ? 'bg-[#6264A7]/10 border-[#6264A7]/20' : 'bg-[#6264A7]/5 border-[#6264A7]/20'
                     }`}>
                         <div className="flex items-center gap-4">
-                            <div className={`p-2 rounded-full ${isDark ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-700'}`}>
+                            <div className={`p-2 rounded-full ${isDark ? 'bg-[#6264A7]/20 text-[#9ea0e6]' : 'bg-[#6264A7]/10 text-[#6264A7]'}`}>
                                 <Truck size={24} />
                             </div>
                             <div>
-                                <h4 className={`font-bold ${isDark ? 'text-amber-400' : 'text-amber-800'}`}>
+                                <h4 className={`font-bold ${isDark ? 'text-[#9ea0e6]' : 'text-[#6264A7]'}`}>
                                     Bestellung noch offen
                                 </h4>
-                                <p className={`text-sm ${isDark ? 'text-amber-400/70' : 'text-amber-700/70'}`}>
+                                <p className={`text-sm ${isDark ? 'text-[#9ea0e6]/70' : 'text-[#6264A7]/70'}`}>
                                     Es wurden noch nicht alle Artikel geliefert.
                                 </p>
                             </div>
@@ -787,16 +943,21 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
 
                 {linkedPO && linkedMaster ? (
                     <>
+                        {/* DISTINCT SUMMARY SECTION */}
                         <div className={`sticky top-0 z-30 pb-4 pt-2 -mx-2 px-2 transition-colors ${
                             isDark ? 'bg-[#0f172a]' : 'bg-[#f8fafc]'
                         }`}>
-                            <div className={`rounded-2xl border overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-                                <div className={`p-4 border-b font-bold flex items-center gap-2 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                            <div className={`rounded-2xl border overflow-hidden shadow-lg ${
+                                isDark ? 'bg-[#1f2937] border-slate-700' : 'bg-white border-slate-300'
+                            }`}>
+                                <div className={`p-4 border-b font-bold flex items-center gap-2 ${
+                                    isDark ? 'bg-[#1f2937] border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-300 text-slate-700'
+                                }`}>
                                     <BarChart3 size={18} className="text-[#0077B5]" /> Bestell-Status (Gesamtübersicht)
                                 </div>
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-left text-sm min-w-[600px]">
-                                        <thead className={`text-xs uppercase font-bold ${isDark ? 'bg-slate-950 text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
+                                        <thead className={`text-xs uppercase font-bold ${isDark ? 'bg-slate-800/50 text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
                                             <tr>
                                                 <th className="px-4 py-2">Artikel</th>
                                                 <th className="px-4 py-2 w-24 text-center">Bestellt</th>
@@ -829,7 +990,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                                                             {over > 0 ? over : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}
                                                         </td>
                                                         <td className="px-4 py-2 text-center">
-                                                            {renderItemStatusIcon(ordered, received, hasIssues)}
+                                                            {renderItemStatusIconForPO(ordered, received, hasIssues)}
                                                         </td>
                                                     </tr>
                                                 );
@@ -904,7 +1065,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                                                                     <th className="px-6 py-2 w-20 text-center">Gesamt</th>
                                                                     <th className="px-6 py-2 w-20 text-center text-red-500">Offen</th>
                                                                     <th className="px-6 py-2 w-20 text-center text-amber-500">Zu viel</th>
-                                                                    <th className="px-6 py-2 w-20 text-center">Status</th>
+                                                                    <th className="px-6 py-2 w-24 text-center">Status</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody className="divide-y divide-slate-500/10">
@@ -930,6 +1091,9 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                                                                         over = Math.max(0, totalReceived - ordered);
                                                                     }
 
+                                                                    // Look up full receipt item for detailed badge
+                                                                    const fullItem = findReceiptItemForLog(delivery, dItem.sku);
+
                                                                     return (
                                                                         <tr key={dItem.sku} className={isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}>
                                                                             <td className="px-6 py-2">
@@ -947,7 +1111,12 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                                                                             <td className="px-6 py-2 text-center font-mono font-bold text-sm">{totalReceived}</td>
                                                                             <td className="px-6 py-2 text-center font-bold text-red-500 text-sm">{pending > 0 ? pending : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}</td>
                                                                             <td className="px-6 py-2 text-center font-bold text-amber-500 text-sm">{over > 0 ? over : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}</td>
-                                                                            <td className="px-6 py-2 text-center">{renderItemStatusIcon(ordered, totalReceived, dItem.damageFlag)}</td>
+                                                                            <td className="px-6 py-2 text-center">
+                                                                                <ItemStatusBadge 
+                                                                                    item={fullItem} 
+                                                                                    quantityInfo={{ ordered, received: totalReceived }} 
+                                                                                />
+                                                                            </td>
                                                                         </tr>
                                                                     );
                                                                 })}
@@ -974,6 +1143,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                                     <th className="p-4 font-medium">Artikel</th>
                                     <th className="p-4 font-medium text-center">Menge</th>
                                     <th className="p-4 font-medium">Lagerort</th>
+                                    <th className="p-4 font-medium w-40">Status</th>
                                 </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-500/10">
@@ -987,6 +1157,9 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                                             {item.quantity}
                                         </td>
                                         <td className="p-4 text-xs">{item.targetLocation}</td>
+                                        <td className="p-4">
+                                            <ItemStatusBadge item={item} />
+                                        </td>
                                     </tr>
                                 ))}
                                 </tbody>

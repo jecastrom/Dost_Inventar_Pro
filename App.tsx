@@ -24,7 +24,14 @@ export default function App() {
   // State
   const [theme, setTheme] = useState<Theme>('light');
   const [activeModule, setActiveModule] = useState<ActiveModule>('dashboard');
-  const [viewMode, setViewMode] = useState<ViewMode>('grid');
+  
+  // Persistent Inventory View Mode
+  const [inventoryViewMode, setInventoryViewMode] = useState<'grid' | 'list'>(() => {
+    if (typeof window !== 'undefined') {
+        return (localStorage.getItem('inventoryViewMode') as 'grid' | 'list') || 'grid';
+    }
+    return 'grid';
+  });
   
   // Sidebar State
   const [sidebarOpen, setSidebarOpen] = useState(false); // Mobile Toggle
@@ -66,6 +73,12 @@ export default function App() {
   const handleSetSidebarMode = (mode: 'full' | 'slim') => {
     setSidebarMode(mode);
     localStorage.setItem('sidebarMode', mode);
+  };
+
+  // Inventory View Mode Handler
+  const handleSetInventoryViewMode = (mode: 'grid' | 'list') => {
+    setInventoryViewMode(mode);
+    localStorage.setItem('inventoryViewMode', mode);
   };
 
   // Navigation Handler (Resets Transient State)
@@ -459,7 +472,7 @@ export default function App() {
                   <InventoryView 
                     inventory={inventory}
                     theme={theme}
-                    viewMode={viewMode}
+                    viewMode={inventoryViewMode}
                     onUpdate={handleStockUpdate}
                     onUpdateItem={handleUpdateItem}
                     onCreateItem={handleCreateItem}
@@ -538,6 +551,8 @@ export default function App() {
                     hasCustomData={inventory !== MOCK_ITEMS}
                     sidebarMode={sidebarMode}
                     onSetSidebarMode={handleSetSidebarMode}
+                    inventoryViewMode={inventoryViewMode}
+                    onSetInventoryViewMode={handleSetInventoryViewMode}
                   />
                 )}
 
