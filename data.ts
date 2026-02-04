@@ -1,4 +1,5 @@
-import { StockItem, ReceiptHeader, ReceiptItem, ReceiptComment, PurchaseOrder, Ticket } from './types';
+
+import { StockItem, ReceiptHeader, ReceiptItem, ReceiptComment, PurchaseOrder, Ticket, ReceiptMaster } from './types';
 
 // Raw data structure interface matching the JSON provided
 interface RawStockItem {
@@ -153,6 +154,7 @@ export const MOCK_PURCHASE_ORDERS: PurchaseOrder[] = [
         supplier: 'Battery Kutter',
         status: 'Offen',
         dateCreated: '2026-02-25',
+        isArchived: false,
         items: [
             {
                 sku: '4000069',
@@ -177,24 +179,27 @@ export const MOCK_PURCHASE_ORDERS: PurchaseOrder[] = [
     {
         id: 'PO-2026-WU02',
         supplier: 'Würth',
-        status: 'Teilweise geliefert',
+        status: 'Offen',
         dateCreated: '2026-02-20',
+        isArchived: false,
         items: [
             {
                 sku: 'UnBEKANNT', // Matches inventory case exactly
                 name: 'Brandmeldeleitung JY-(st)Y ',
                 quantityExpected: 50,
-                quantityReceived: 20 // Simulated partial receipt
+                quantityReceived: 0
             },
             {
                 sku: 'Unbekannt', // Matches inventory case exactly
                 name: 'Transport Box Batterien Rot',
                 quantityExpected: 5,
-                quantityReceived: 5 // Fully received line item
+                quantityReceived: 0
             }
         ]
     }
 ];
+
+export const MOCK_RECEIPT_MASTERS: ReceiptMaster[] = [];
 
 // ------------------------------------------------------------------
 // CASE MANAGEMENT MOCK DATA (PHASE 4)
@@ -244,6 +249,23 @@ export const MOCK_TICKETS: Ticket[] = [
                 text: 'Geklärt mit Lieferant. Gutschrift erhalten.',
                 timestamp: Date.now() - 1000000,
                 type: 'user'
+            }
+        ]
+    },
+    // Requested Sample Ticket
+    {
+        id: 't-3',
+        receiptId: 'b-101', 
+        subject: 'Beschädigte Ware',
+        status: 'Open',
+        priority: 'High',
+        messages: [
+            {
+                id: 'msg-new-1',
+                author: 'System',
+                text: 'Ticket automatisch erstellt bei Warenprüfung.',
+                timestamp: Date.now(),
+                type: 'system'
             }
         ]
     }

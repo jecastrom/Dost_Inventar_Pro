@@ -1,6 +1,7 @@
+
 import React, { useRef } from 'react';
 import { Theme, StockItem, RawGermanItem } from '../types';
-import { Book, ChevronRight, Moon, Sun, Monitor, Shield, Info, Upload, Trash2, Database, AlertCircle, CheckCircle2, Users } from 'lucide-react';
+import { Book, ChevronRight, Moon, Sun, Monitor, Shield, Info, Upload, Trash2, Database, AlertCircle, CheckCircle2, Users, Sidebar, LayoutPanelLeft } from 'lucide-react';
 
 interface SettingsPageProps {
   theme: Theme;
@@ -9,6 +10,8 @@ interface SettingsPageProps {
   onUploadData: (data: StockItem[]) => void;
   onClearData: () => void;
   hasCustomData: boolean;
+  sidebarMode: 'full' | 'slim';
+  onSetSidebarMode: (mode: 'full' | 'slim') => void;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ 
@@ -17,7 +20,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onNavigate,
   onUploadData,
   onClearData,
-  hasCustomData
+  hasCustomData,
+  sidebarMode,
+  onSetSidebarMode
 }) => {
   const isDark = theme === 'dark';
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -119,6 +124,28 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         />
 
         <SettingRow 
+          icon={<LayoutPanelLeft size={20} />}
+          label="Seitenleiste"
+          description="Darstellung der Navigation (Desktop)"
+          action={
+            <div className={`flex p-1 rounded-lg ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                <button 
+                    onClick={() => onSetSidebarMode('slim')}
+                    className={`px-3 py-1 text-xs font-bold rounded transition-all ${sidebarMode === 'slim' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                    Kompakt
+                </button>
+                <button 
+                    onClick={() => onSetSidebarMode('full')}
+                    className={`px-3 py-1 text-xs font-bold rounded transition-all ${sidebarMode === 'full' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                    Voll
+                </button>
+            </div>
+          }
+        />
+
+        <SettingRow 
           icon={<Monitor size={20} />}
           label="Ansicht"
           description="Standardansicht für Lagerbestand"
@@ -213,8 +240,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         <SettingRow 
           icon={<Info size={20} />}
           label="Version"
-          description="Build 2026.01.31-v2.0"
-          action={<span className="text-xs font-mono text-slate-500">v2.0.0</span>}
+          description="Build 2026.02.01-v0.2.0"
+          action={<span className="text-xs font-mono text-slate-500">v0.2.0</span>}
         />
       </div>
 

@@ -1,12 +1,14 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   Search, Filter, Calendar, MapPin, Package, ChevronRight, 
-  ArrowLeft, Save, Mail, Phone, StickyNote, Send, Clock, User, X,
-  MessageSquare, AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Plus, FileText, Truck,
-  CornerDownRight, CheckSquare, RefreshCw
+  ArrowLeft, Mail, Phone, StickyNote, Send, Clock, User, X,
+  AlertCircle, CheckCircle2, ChevronDown, ChevronUp, FileText, Truck,
+  CheckSquare, BarChart3, Ban, Archive, Briefcase, PlayCircle, Info, PackagePlus,
+  AlertTriangle, Layers, Plus, MessageSquare, CornerDownRight, Unlock, Lock
 } from 'lucide-react';
-import { ReceiptHeader, ReceiptItem, Theme, ReceiptComment, TRANSACTION_STATUS_OPTIONS, Ticket, TicketPriority, PurchaseOrder, TicketMessage } from '../types';
+import { ReceiptHeader, ReceiptItem, Theme, ReceiptComment, Ticket, TicketPriority, PurchaseOrder, TicketMessage, ReceiptMaster } from '../types';
 
 interface ReceiptManagementProps {
   headers: ReceiptHeader[];
@@ -14,11 +16,13 @@ interface ReceiptManagementProps {
   comments: ReceiptComment[];
   tickets: Ticket[];
   purchaseOrders: PurchaseOrder[];
+  receiptMasters: ReceiptMaster[];
   theme: Theme;
   onUpdateStatus: (batchId: string, newStatus: string) => void;
   onAddComment: (batchId: string, type: 'note' | 'email' | 'call', message: string) => void;
   onAddTicket: (ticket: Ticket) => void;
   onUpdateTicket: (ticket: Ticket) => void;
+  onReceiveGoods: (poId: string) => void;
 }
 
 // Internal Modal Component for New Ticket
@@ -38,7 +42,6 @@ const NewTicketModal = ({ isOpen, onClose, onSave, theme }: { isOpen: boolean, o
         setDescription('');
     };
 
-    // Helper for visual priority feedback
     const getPriorityStyles = (p: TicketPriority) => {
         if (p === 'Urgent') return isDark ? 'border-red-500 bg-red-500/10 text-red-400 focus:ring-red-500/30' : 'border-red-500 bg-red-50 text-red-700 focus:ring-red-500/30';
         if (p === 'High') return isDark ? 'border-orange-500 bg-orange-500/10 text-orange-400 focus:ring-orange-500/30' : 'border-orange-500 bg-orange-50 text-orange-700 focus:ring-orange-500/30';
@@ -106,7 +109,7 @@ const NewTicketModal = ({ isOpen, onClose, onSave, theme }: { isOpen: boolean, o
                         disabled={!subject || !description}
                         className="px-5 py-2.5 bg-[#0077B5] hover:bg-[#00A0DC] text-white rounded-xl font-bold shadow-lg shadow-blue-500/20 disabled:opacity-50 disabled:shadow-none transition-all flex items-center gap-2"
                     >
-                        <Save size={18} /> Fall erstellen
+                        <CheckCircle2 size={18} /> Fall erstellen
                     </button>
                 </div>
             </div>
@@ -115,17 +118,27 @@ const NewTicketModal = ({ isOpen, onClose, onSave, theme }: { isOpen: boolean, o
     );
 };
 
+// Extended Type for Grouped Rows
+type ReceiptListRow = ReceiptHeader & {
+    isGroup?: boolean;
+    deliveryCount?: number;
+    masterStatus?: string;
+    subHeaders?: ReceiptHeader[]; // For search reference
+};
+
 export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
   headers,
   items,
   comments,
   tickets,
   purchaseOrders,
+  receiptMasters,
   theme,
   onUpdateStatus,
   onAddComment,
   onAddTicket,
-  onUpdateTicket
+  onUpdateTicket,
+  onReceiveGoods
 }) => {
   const isDark = theme === 'dark';
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -141,41 +154,122 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
   const [filterUser, setFilterUser] = useState('');
 
   // -- Detail State --
-  const [editStatus, setEditStatus] = useState('');
   const [commentInput, setCommentInput] = useState('');
   const [commentType, setCommentType] = useState<'note' | 'email' | 'call'>('note');
   
-  // Phase 4: Tabs & Tickets
+  // Phase 4: Tabs & Tickets & Delivery History
   const [activeTab, setActiveTab] = useState<'items' | 'tickets'>('items');
   const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null);
   const [showNewTicketModal, setShowNewTicketModal] = useState(false);
   const [replyText, setReplyText] = useState('');
+  
+  // Expanded Delivery Logs State
+  const [expandedDeliveryId, setExpandedDeliveryId] = useState<string | null>(null);
 
   // Clear reply text when switching tickets or tabs
   useEffect(() => {
     setReplyText('');
-  }, [expandedTicketId, activeTab]);
+    // Auto-expand first ticket if none selected
+    if (activeTab === 'tickets' && !expandedTicketId && relatedTickets.length > 0) {
+        setExpandedTicketId(relatedTickets[0].id);
+    }
+  }, [activeTab]);
 
-  // -- Computed --
-  const filteredHeaders = useMemo(() => {
-    return headers.filter(h => {
-      // 1. Text Search
+  // -- Detail View Hooks --
+  const selectedHeader = useMemo(() => headers.find(h => h.batchId === selectedBatchId), [headers, selectedBatchId]);
+  const relatedItems = useMemo(() => items.filter(i => i.batchId === selectedBatchId), [items, selectedBatchId]);
+  const relatedComments = useMemo(() => comments.filter(c => c.batchId === selectedBatchId).sort((a,b) => b.timestamp - a.timestamp), [comments, selectedBatchId]);
+  const relatedTickets = useMemo(() => tickets.filter(t => t.receiptId === selectedBatchId), [tickets, selectedBatchId]);
+  
+  // Get currently selected ticket object
+  const selectedTicket = useMemo(() => relatedTickets.find(t => t.id === expandedTicketId), [relatedTickets, expandedTicketId]);
+
+  // Linked Purchase Order Logic
+  const linkedPO = useMemo(() => {
+      if (!selectedHeader?.bestellNr) return null;
+      return purchaseOrders.find(po => po.id === selectedHeader.bestellNr);
+  }, [selectedHeader, purchaseOrders]);
+
+  // Linked Receipt Master Logic (For Multi-Delivery View)
+  const linkedMaster = useMemo(() => {
+      if (!selectedHeader?.bestellNr) return null;
+      return receiptMasters.find(m => m.poId === selectedHeader.bestellNr);
+  }, [selectedHeader, receiptMasters]);
+
+  // 1. Group Data Logic
+  const groupedRows = useMemo(() => {
+      const groups: Record<string, ReceiptHeader[]> = {};
+      const singles: ReceiptHeader[] = [];
+
+      const sortedHeaders = [...headers].sort((a, b) => b.timestamp - a.timestamp);
+
+      sortedHeaders.forEach(h => {
+          if (h.bestellNr) {
+              if (!groups[h.bestellNr]) groups[h.bestellNr] = [];
+              groups[h.bestellNr].push(h);
+          } else {
+              singles.push(h);
+          }
+      });
+
+      const result: ReceiptListRow[] = [];
+
+      Object.entries(groups).forEach(([poId, groupHeaders]) => {
+          const latest = groupHeaders[0];
+          const master = receiptMasters.find(m => m.poId === poId);
+          const deliveryCount = groupHeaders.length;
+
+          result.push({
+              ...latest,
+              isGroup: true,
+              deliveryCount: deliveryCount,
+              masterStatus: master ? master.status : latest.status,
+              subHeaders: groupHeaders
+          });
+      });
+
+      singles.forEach(h => {
+          result.push({
+              ...h,
+              isGroup: false,
+              deliveryCount: 1,
+              masterStatus: h.status
+          });
+      });
+
+      return result.sort((a, b) => b.timestamp - a.timestamp);
+  }, [headers, receiptMasters]);
+
+  // 2. Filter Logic
+  const filteredRows = useMemo(() => {
+    return groupedRows.filter(row => {
+      const displayStatus = row.masterStatus || row.status;
       const term = searchTerm.toLowerCase();
-      const matchesSearch = 
-        h.lieferscheinNr.toLowerCase().includes(term) ||
-        h.lieferant.toLowerCase().includes(term) ||
-        (h.bestellNr ? h.bestellNr.toLowerCase().includes(term) : false);
+      let matchesSearch = false;
+
+      if (
+          row.lieferscheinNr.toLowerCase().includes(term) ||
+          row.lieferant.toLowerCase().includes(term) ||
+          (row.bestellNr ? row.bestellNr.toLowerCase().includes(term) : false)
+      ) {
+          matchesSearch = true;
+      }
+
+      if (!matchesSearch && row.isGroup && row.subHeaders) {
+          matchesSearch = row.subHeaders.some(sub => sub.lieferscheinNr.toLowerCase().includes(term));
+      }
       
       if (!matchesSearch) return false;
 
-      // 2. Status Filter
-      if (statusFilter === 'booked' && h.status !== 'Gebucht') return false;
-      if (statusFilter === 'open' && h.status === 'Gebucht') return false;
+      if (statusFilter === 'booked') {
+          if (displayStatus !== 'Gebucht' && displayStatus !== 'Abgeschlossen') return false;
+      }
+      if (statusFilter === 'open') {
+          if (displayStatus === 'Gebucht' || displayStatus === 'Abgeschlossen') return false;
+      }
 
-      // 3. Date Range Filter (based on Entry Timestamp)
       if (dateFrom || dateTo) {
-          const entryDate = new Date(h.timestamp).setHours(0,0,0,0);
-          
+          const entryDate = new Date(row.timestamp).setHours(0,0,0,0);
           if (dateFrom) {
             const from = new Date(dateFrom).setHours(0,0,0,0);
             if (entryDate < from) return false;
@@ -186,42 +280,68 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
           }
       }
 
-      // 4. User Filter
       if (filterUser) {
-          const user = (h.createdByName || '').toLowerCase();
+          const user = (row.createdByName || '').toLowerCase();
           if (!user.includes(filterUser.toLowerCase())) return false;
       }
 
       return true;
-    }).sort((a, b) => b.timestamp - a.timestamp);
-  }, [headers, searchTerm, statusFilter, dateFrom, dateTo, filterUser]);
+    });
+  }, [groupedRows, searchTerm, statusFilter, dateFrom, dateTo, filterUser]);
 
-  const selectedHeader = useMemo(() => headers.find(h => h.batchId === selectedBatchId), [headers, selectedBatchId]);
-  const relatedItems = useMemo(() => items.filter(i => i.batchId === selectedBatchId), [items, selectedBatchId]);
-  const relatedComments = useMemo(() => comments.filter(c => c.batchId === selectedBatchId).sort((a,b) => b.timestamp - a.timestamp), [comments, selectedBatchId]);
-  const relatedTickets = useMemo(() => tickets.filter(t => t.receiptId === selectedBatchId), [tickets, selectedBatchId]);
+  // Snapshot Logic
+  const deliverySnapshots = useMemo(() => {
+      if (!linkedMaster) return {};
+      const snaps: Record<string, Record<string, { pre: number, current: number, post: number }>> = {};
+      const running: Record<string, number> = {};
+      const sortedDeliveries = [...linkedMaster.deliveries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      
+      sortedDeliveries.forEach(d => {
+          snaps[d.id] = {};
+          d.items.forEach(item => {
+              const pre = running[item.sku] || 0;
+              const current = item.receivedQty;
+              const post = pre + current;
+              running[item.sku] = post;
+              snaps[d.id][item.sku] = { pre, current, post };
+          });
+      });
+      return snaps;
+  }, [linkedMaster]);
 
-  // Linked Purchase Order Logic
-  const linkedPO = useMemo(() => {
-      if (!selectedHeader?.bestellNr) return null;
-      return purchaseOrders.find(po => po.id === selectedHeader.bestellNr);
-  }, [selectedHeader, purchaseOrders]);
+  const canReceiveMore = useMemo(() => {
+      if (!linkedPO) return false;
+      if (linkedPO.status === 'Abgeschlossen' || linkedPO.status === 'Storniert') return false;
+      const hasRemaining = linkedPO.items.some(i => i.quantityReceived < i.quantityExpected);
+      return hasRemaining;
+  }, [linkedPO]);
+
+  const visibleDeliveries = useMemo(() => {
+      return linkedMaster ? linkedMaster.deliveries.filter(d => d.lieferscheinNr !== 'Ausstehend') : [];
+  }, [linkedMaster]);
+
+  useEffect(() => {
+      if (visibleDeliveries.length === 1) {
+          setExpandedDeliveryId(visibleDeliveries[0].id);
+      }
+  }, [visibleDeliveries, selectedBatchId]);
 
   // -- Handlers --
   const handleOpenDetail = (header: ReceiptHeader) => {
     setSelectedBatchId(header.batchId);
-    setEditStatus(header.status);
     setCommentInput('');
-    setActiveTab('items'); // Reset to default tab
+    setActiveTab('items'); 
+    setExpandedDeliveryId(null);
   };
 
   const handleBack = () => {
     setSelectedBatchId(null);
   };
 
-  const handleSaveStatus = () => {
-    if (selectedBatchId && editStatus) {
-      onUpdateStatus(selectedBatchId, editStatus);
+  const handleForceClose = () => {
+    if (!selectedBatchId) return;
+    if (window.confirm("Möchten Sie diesen Vorgang wirklich manuell beenden? Der Status wird auf 'Abgeschlossen' gesetzt.")) {
+      onUpdateStatus(selectedBatchId, 'Abgeschlossen');
     }
   };
 
@@ -252,23 +372,28 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
 
     onAddTicket(newTicket);
     setShowNewTicketModal(false);
+    setActiveTab('tickets');
+    setExpandedTicketId(newTicket.id);
   };
 
   const handleReplyTicket = (ticket: Ticket, close: boolean) => {
-    if (!replyText.trim()) return;
+    if (!replyText.trim() && !close) return;
 
-    const newMessage: TicketMessage = {
-        id: crypto.randomUUID(),
-        author: 'Admin User',
-        text: replyText,
-        timestamp: Date.now(),
-        type: 'user'
-    };
+    const messages = [...ticket.messages];
+    if (replyText.trim()) {
+        messages.push({
+            id: crypto.randomUUID(),
+            author: 'Admin User',
+            text: replyText,
+            timestamp: Date.now(),
+            type: 'user'
+        });
+    }
 
     const updatedTicket: Ticket = {
         ...ticket,
         status: close ? 'Closed' : 'Open',
-        messages: [...ticket.messages, newMessage]
+        messages
     };
 
     onUpdateTicket(updatedTicket);
@@ -290,8 +415,8 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
     onUpdateTicket(updatedTicket);
   };
 
-  const toggleTicketExpand = (id: string) => {
-    setExpandedTicketId(prev => prev === id ? null : id);
+  const toggleDeliveryExpand = (id: string) => {
+      setExpandedDeliveryId(prev => prev === id ? null : id);
   };
 
   const clearFilters = () => {
@@ -300,66 +425,64 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
     setFilterUser('');
   };
 
-  // UPDATED: Traffic Light Logic for List View
   const statusColors = (status: string) => {
-    // Green
-    if (status === 'Gebucht') return isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200';
-    
-    // Red (Critical - Short Delivery is now here)
-    if (['Quarantäne', 'Beschädigt', 'Reklamation', 'Falsch geliefert', 'Teillieferung', 'Untermenge'].includes(status)) {
+    if (status === 'Gebucht' || status === 'Abgeschlossen') {
+        return isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200';
+    }
+    if (status === 'In Prüfung' || status === 'Wartet auf Prüfung') {
+        return isDark 
+            ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' 
+            : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20';
+    }
+    if (status === 'Offen') {
+        return isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-100 text-blue-700 border-blue-200';
+    }
+    if (['Quarantäne', 'Beschädigt', 'Reklamation', 'Falsch geliefert', 'Untermenge', 'Abgelehnt', 'Rücklieferung'].includes(status)) {
         return isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-100 text-red-700 border-red-200';
     }
-    
-    // Amber (Alert - Over Delivery is now here)
-    if (['Übermenge', 'Projekt'].includes(status)) {
+    if (['Übermenge', 'Teillieferung'].includes(status)) {
         return isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-100 text-amber-700 border-amber-200';
     }
-
-    // Default Blue
     return isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-100 text-blue-700 border-blue-200';
   };
 
-  // UPDATED: Helper for Prominent Status Badge Styles (Detail View)
   const getBadgeStyles = (status: string) => {
-    // Green
-    if (status === 'Gebucht') {
+    if (status === 'Gebucht' || status === 'Abgeschlossen') {
         return isDark 
             ? 'bg-emerald-900/30 border-emerald-500 text-emerald-500' 
             : 'bg-emerald-100 border-emerald-500 text-emerald-700';
     }
-    // Red (Critical Issues - Added Teillieferung/Untermenge)
-    if (['Quarantäne', 'Beschädigt', 'Reklamation', 'Falsch geliefert', 'Abgelehnt', 'Rücklieferung', 'Teillieferung', 'Untermenge'].includes(status)) {
+    if (status === 'In Prüfung' || status === 'Wartet auf Prüfung') {
+        return isDark 
+            ? 'bg-[#6264A7]/20 border-[#6264A7]/50 text-[#9ea0e6]' 
+            : 'bg-[#6264A7]/10 border-[#6264A7] text-[#6264A7]';
+    }
+    if (['Quarantäne', 'Beschädigt', 'Reklamation', 'Falsch geliefert', 'Abgelehnt', 'Rücklieferung', 'Untermenge'].includes(status)) {
         return isDark 
             ? 'bg-red-900/30 border-red-500 text-red-500' 
             : 'bg-red-100 border-red-500 text-red-700';
     }
-    // Amber (Warnings - Added Übermenge)
-    if (['Übermenge', 'Projekt', 'In Bearbeitung'].includes(status)) {
+    if (['Übermenge', 'Teillieferung'].includes(status)) {
         return isDark 
             ? 'bg-amber-900/30 border-amber-500 text-amber-500' 
             : 'bg-amber-100 border-amber-500 text-amber-700';
     }
-    // Blue (Active/Processing)
     return isDark 
         ? 'bg-blue-900/30 border-blue-500 text-blue-500' 
         : 'bg-blue-100 border-blue-500 text-blue-700';
   };
 
-  const inputClass = `w-full border rounded-xl px-3 py-2 text-base md:text-sm transition-all outline-none focus:ring-2 ${
-      isDark 
-        ? 'bg-slate-900 border-slate-700 text-slate-100 focus:ring-blue-500/30' 
-        : 'bg-white border-slate-200 text-[#313335] focus:ring-[#0077B5]/20'
-  }`;
+  const renderItemStatusIcon = (ordered: number, received: number, hasIssues: boolean) => {
+      const isPerfect = !hasIssues && ordered === received;
+      if (isPerfect) return (<div className="flex justify-center"><CheckCircle2 size={18} className="text-emerald-500" /></div>);
+      return (<div className="flex justify-center" title={hasIssues ? "Probleme gemeldet" : ordered !== received ? "Mengenabweichung" : ""}><AlertTriangle size={18} className="text-amber-500" /></div>);
+  };
 
-  // --------------------------------------------------------------------------------
-  // SCREEN 1: OVERVIEW TABLE
-  // --------------------------------------------------------------------------------
   if (!selectedBatchId) {
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
         <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
           <h2 className="text-2xl font-bold">Wareneingang Verwaltung</h2>
-          
           <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl overflow-x-auto no-scrollbar max-w-full">
             {(['all', 'open', 'booked'] as const).map(f => (
               <button
@@ -378,7 +501,6 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
         </div>
 
         <div className="flex flex-col gap-4">
-          {/* Main Search Bar Row */}
           <div className="flex flex-col md:flex-row gap-4">
             <div className="relative flex-1 group">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
@@ -394,7 +516,6 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                 }`}
               />
             </div>
-            
             <button 
               onClick={() => setShowFilters(!showFilters)}
               className={`px-4 py-3 md:py-0 rounded-xl border flex items-center justify-center gap-2 font-bold transition-all ${
@@ -405,11 +526,9 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
             >
               <Filter size={18} />
               <span>Filter</span>
-              {(dateFrom || dateTo || filterUser) && <div className="w-2 h-2 rounded-full bg-red-500" />}
             </button>
           </div>
 
-          {/* Expandable Filter Panel */}
           {showFilters && (
             <div className={`p-5 rounded-2xl border animate-in slide-in-from-top-2 duration-200 ${
               isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-50 border-slate-200'
@@ -425,11 +544,11 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-1.5">
                    <label className="text-[10px] uppercase font-bold text-slate-500">Zeitraum Von</label>
-                   <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className={inputClass} />
+                   <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className={`w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 ${isDark ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200'}`} />
                 </div>
                 <div className="space-y-1.5">
                    <label className="text-[10px] uppercase font-bold text-slate-500">Zeitraum Bis</label>
-                   <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className={inputClass} />
+                   <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className={`w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 ${isDark ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200'}`} />
                 </div>
                 <div className="space-y-1.5">
                    <label className="text-[10px] uppercase font-bold text-slate-500">Erfasst von (Benutzer)</label>
@@ -440,7 +559,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                         value={filterUser} 
                         onChange={e => setFilterUser(e.target.value)} 
                         placeholder="Benutzername..." 
-                        className={`${inputClass} pl-9`} 
+                        className={`w-full border rounded-xl pl-9 px-3 py-2 text-sm outline-none focus:ring-2 ${isDark ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-slate-200'}`} 
                       />
                    </div>
                 </div>
@@ -456,43 +575,85 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                  <tr>
                    <th className="p-4 font-semibold">Status</th>
                    <th className="p-4 font-semibold">Bestell Nr.</th>
+                   <th className="p-4 font-semibold text-center">Bestellbestätigung</th>
                    <th className="p-4 font-semibold">Lieferschein</th>
                    <th className="p-4 font-semibold">Lieferant</th>
-                   <th className="p-4 font-semibold">Erfasst am / von</th>
-                   <th className="p-4 font-semibold text-right">Positionen</th>
-                   <th className="p-4"></th>
+                   <th className="p-4 font-semibold">Aktualisiert am / von</th>
+                   <th className="p-4 font-semibold text-right"></th>
                  </tr>
                </thead>
                <tbody className="divide-y divide-slate-500/10">
-                  {filteredHeaders.map(h => (
+                  {filteredRows.map(row => {
+                    const linkedPO = purchaseOrders.find(po => po.id === row.bestellNr);
+                    const displayStatus = row.masterStatus || row.status;
+                    const deliveryCount = row.deliveryCount || 1;
+
+                    return (
                     <tr 
-                      key={h.batchId} 
-                      onClick={() => handleOpenDetail(h)}
+                      key={row.batchId} 
+                      onClick={() => handleOpenDetail(row)}
                       className={`cursor-pointer transition-colors ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-50'}`}
                     >
                       <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusColors(h.status)}`}>
-                          {h.status}
-                        </span>
-                      </td>
-                      <td className="p-4 font-medium text-slate-600 dark:text-slate-400">{h.bestellNr || '—'}</td>
-                      <td className="p-4 font-medium">{h.lieferscheinNr}</td>
-                      <td className="p-4 text-slate-500">{h.lieferant}</td>
-                      <td className="p-4 text-slate-500">
-                        <div className="flex flex-col">
-                          <span className="flex items-center gap-1.5"><Calendar size={12}/> {new Date(h.timestamp).toLocaleDateString()}</span>
-                          <span className="flex items-center gap-1.5 mt-1 text-xs opacity-70"><User size={12}/> {h.createdByName || 'Unbekannt'}</span>
+                        <div className="flex flex-wrap gap-2 items-center">
+                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusColors(displayStatus)}`}>
+                              {displayStatus}
+                            </span>
+                            {linkedPO?.status === 'Projekt' && (
+                                <span className={`px-2.5 py-1 rounded-full text-xs font-bold border flex items-center gap-1.5 ${
+                                    isDark 
+                                    ? 'bg-blue-900/30 text-blue-400 border-blue-800' 
+                                    : 'bg-blue-100 text-blue-700 border-blue-200'
+                                }`}>
+                                    <Briefcase size={12} /> Projekt
+                                </span>
+                            )}
                         </div>
                       </td>
-                      <td className="p-4 text-right font-mono font-bold">
-                        {items ? items.filter(i => i.batchId === h.batchId).length : 0}
+                      <td className="p-4 font-medium text-slate-600 dark:text-slate-400">
+                          {row.isGroup ? (
+                              <div className="flex items-center gap-2">
+                                  <Layers size={14} className="text-[#0077B5]" />
+                                  <span className="font-bold">{row.bestellNr}</span>
+                              </div>
+                          ) : (
+                              row.bestellNr || '—'
+                          )}
+                      </td>
+                      <td className="p-4 text-center">
+                        {linkedPO?.pdfUrl ? (
+                           <div className="flex justify-center" title="Bestätigung vorhanden">
+                             <CheckCircle2 size={18} className="text-emerald-500" />
+                           </div>
+                        ) : (
+                           <div className="flex justify-center opacity-30" title="Keine Bestätigung">
+                             <Ban size={18} className="text-slate-500" />
+                           </div>
+                        )}
+                      </td>
+
+                      <td className="p-4 font-medium">
+                          {deliveryCount > 1 ? (
+                              <span className="italic opacity-80 flex items-center gap-1">
+                                  Multiple ({deliveryCount})
+                              </span>
+                          ) : (
+                              row.lieferscheinNr
+                          )}
+                      </td>
+                      <td className="p-4 text-slate-500">{row.lieferant}</td>
+                      <td className="p-4 text-slate-500">
+                        <div className="flex flex-col">
+                          <span className="flex items-center gap-1.5"><Calendar size={12}/> {new Date(row.timestamp).toLocaleDateString()}</span>
+                          <span className="flex items-center gap-1.5 mt-1 text-xs opacity-70"><User size={12}/> {row.createdByName || 'Unbekannt'}</span>
+                        </div>
                       </td>
                       <td className="p-4 text-right text-slate-400"><ChevronRight size={18} /></td>
                     </tr>
-                  ))}
-                  {filteredHeaders.length === 0 && (
+                  )})}
+                  {filteredRows.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="p-12 text-center text-slate-500">Keine Datensätze gefunden.</td>
+                      <td colSpan={8} className="p-12 text-center text-slate-500">Keine Datensätze gefunden.</td>
                     </tr>
                   )}
                </tbody>
@@ -503,83 +664,63 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
     );
   }
 
-  // --------------------------------------------------------------------------------
-  // SCREEN 2: DETAIL VIEW (TABBED)
-  // --------------------------------------------------------------------------------
   if (!selectedHeader) return null;
 
   return (
     <div className="h-full flex flex-col animate-in slide-in-from-right-8 duration-300 pb-20 lg:pb-0">
       
       {/* PANE A: HEADER & STATUS CONTROL */}
-      <div className={`mb-6 p-4 md:p-6 rounded-2xl border flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-        <div className="w-full lg:w-auto">
-           <button onClick={handleBack} className="flex items-center gap-2 text-slate-500 hover:text-[#0077B5] mb-2 text-sm font-bold transition-colors">
-              <ArrowLeft size={16} /> Zurück
-           </button>
-           
-           {/* UPDATED HEADER: Explicit Separation of Lieferschein and Bestellung */}
-           <div className="flex flex-col gap-4 mt-3">
-              <div className="flex flex-col sm:flex-row sm:items-baseline gap-6">
-                  {/* Lieferschein Block */}
+      <div className={`mb-8 p-4 md:p-6 rounded-2xl border flex flex-col ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+        <div className="flex justify-between items-start mb-6">
+            <button onClick={handleBack} className="flex items-center gap-2 text-slate-500 hover:text-[#0077B5] text-sm font-bold transition-colors">
+                <ArrowLeft size={16} /> Zurück zur Übersicht
+            </button>
+            <div className="flex items-center gap-3 ml-auto">
+               <div className={`px-4 py-1.5 rounded-full border flex items-center gap-2 shadow-sm ${getBadgeStyles(selectedHeader.status)}`}>
+                   <span className="text-sm font-bold uppercase tracking-wider">{selectedHeader.status}</span>
+                   <span className="w-2 h-2 rounded-full bg-current animate-pulse shadow-[0_0_8px_currentColor]" />
+               </div>
+               {selectedHeader.status !== 'Abgeschlossen' && (
+                  <>
+                    <div className="h-6 w-px bg-slate-500/20 mx-1"></div>
+                    <button
+                        onClick={handleForceClose}
+                        className={`px-3 py-1.5 rounded-lg border text-sm font-bold transition-all flex items-center gap-2 ${
+                            isDark 
+                            ? 'border-slate-700 text-slate-400 hover:border-red-500 hover:text-red-400 hover:bg-red-500/10' 
+                            : 'border-slate-300 text-slate-500 hover:border-red-500 hover:text-red-600 hover:bg-red-50'
+                        }`}
+                    >
+                        <Archive size={16} />
+                        <span className="hidden sm:inline">Abschließen / Archivieren</span>
+                    </button>
+                  </>
+               )}
+            </div>
+        </div>
+
+        <div className="flex flex-col gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-baseline gap-6 md:gap-12">
                   <div>
                       <span className={`text-[10px] uppercase font-bold tracking-wider block mb-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Lieferschein</span>
-                      <h2 className="text-2xl font-bold leading-none">{selectedHeader.lieferscheinNr}</h2>
+                      <h2 className="text-3xl font-black leading-none tracking-tight">{selectedHeader.lieferscheinNr}</h2>
                   </div>
-                  
-                  {/* Divider for Mobile/Desktop */}
-                  <div className={`hidden sm:block w-px h-8 ${isDark ? 'bg-slate-800' : 'bg-slate-300'}`}></div>
-
-                  {/* Bestellung Block */}
+                  <div className={`hidden sm:block w-px h-10 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`}></div>
                   <div>
                       <span className={`text-[10px] uppercase font-bold tracking-wider block mb-0.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Bestellung</span>
-                      <div className={`text-lg font-bold ${selectedHeader.bestellNr ? '' : 'opacity-50 italic font-normal'}`}>
+                      <div className={`text-xl font-bold ${selectedHeader.bestellNr ? '' : 'opacity-50 italic font-normal'}`}>
                           {selectedHeader.bestellNr || 'Nicht angegeben'}
                       </div>
                   </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-500 border-t pt-3 mt-1 border-dashed border-slate-500/20">
-                 <span className="font-semibold flex items-center gap-2"><Truck size={14} className="text-[#0077B5]" /> {selectedHeader.lieferant}</span>
+              <div className={`flex flex-wrap items-center gap-x-6 gap-y-2 text-sm border-t pt-4 mt-2 ${isDark ? 'border-slate-800 text-slate-400' : 'border-slate-100 text-slate-500'}`}>
+                 <span className="font-semibold flex items-center gap-2 text-base"><Truck size={16} className="text-[#0077B5]" /> {selectedHeader.lieferant}</span>
+                 <div className="w-1 h-1 rounded-full bg-slate-500/30 hidden sm:block"></div>
                  <span className="flex items-center gap-1.5"><Calendar size={14}/> {new Date(selectedHeader.timestamp).toLocaleDateString()}</span>
                  <span className="flex items-center gap-1.5"><MapPin size={14}/> {selectedHeader.warehouseLocation}</span>
                  <span className="flex items-center gap-1.5"><User size={14}/> {selectedHeader.createdByName || '—'}</span>
               </div>
-           </div>
-        </div>
-
-        <div className={`w-full lg:w-auto p-6 rounded-2xl border flex flex-col items-center gap-4 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
-           <div className="flex flex-col items-center gap-2">
-              <label className="text-[10px] uppercase font-bold text-slate-500">Aktueller Status</label>
-              
-              {/* New Prominent Traffic Light Status Badge */}
-              <div className={`px-6 py-2 rounded-full border-2 flex items-center gap-3 shadow-lg ${getBadgeStyles(selectedHeader.status)}`}>
-                  <span className="text-lg font-bold uppercase tracking-wider">{selectedHeader.status}</span>
-                  <span className="w-3 h-3 rounded-full bg-current animate-pulse shadow-[0_0_10px_currentColor]" />
-              </div>
-           </div>
-           
-           {selectedHeader.status !== 'Gebucht' && (
-             <div className="flex items-center gap-2 w-full pt-4 mt-2 border-t border-dashed border-slate-500/20">
-                <select 
-                  value={editStatus} 
-                  onChange={(e) => setEditStatus(e.target.value)}
-                  className={`block w-full p-2 rounded-lg border text-base md:text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-300'}`}
-                >
-                  {TRANSACTION_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <button 
-                  onClick={handleSaveStatus}
-                  className={`px-4 py-2 rounded-lg font-bold text-white shadow-lg transition-all flex items-center justify-center gap-2 ${
-                    editStatus === 'Gebucht' 
-                      ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-500/20' 
-                      : 'bg-[#0077B5] hover:bg-[#00A0DC] shadow-blue-500/20'
-                  }`}
-                >
-                  <Save size={18} />
-                </button>
-             </div>
-           )}
         </div>
       </div>
 
@@ -593,7 +734,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                 : 'text-slate-500 border-transparent hover:text-slate-700 dark:hover:text-slate-300'
             }`}
          >
-            Positionen
+            Positionen & Historie
          </button>
          <button 
             onClick={() => setActiveTab('tickets')}
@@ -614,296 +755,486 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
       {activeTab === 'items' && (
         <div className="flex-1 flex flex-col lg:flex-row gap-6 min-h-0 animate-in fade-in slide-in-from-left-4">
             
-            {/* PANE B: ITEM LIST (LEFT MAIN) */}
-            <div className={`flex-[2] rounded-2xl border overflow-hidden flex flex-col min-h-[400px] ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-            <div className={`p-4 border-b font-bold flex items-center gap-2 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
-                <Package size={18} className="text-slate-500" /> Enthaltene Artikel
-            </div>
-            <div className="flex-1 overflow-y-auto">
-                <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm min-w-[600px]">
-                    <thead className={`sticky top-0 backdrop-blur-md z-10 ${isDark ? 'bg-slate-900/80' : 'bg-white/80'}`}>
-                    <tr className="text-slate-500">
-                        <th className="p-4 font-medium">Artikel</th>
-                        {linkedPO && <th className="p-4 font-medium text-center">Bestellt</th>}
-                        <th className="p-4 font-medium text-center">{linkedPO ? 'Geliefert' : 'Menge'}</th>
-                        {linkedPO && <th className="p-4 font-medium text-center text-red-500">Offen</th>}
-                        {linkedPO && <th className="p-4 font-medium text-center text-amber-500">Zu viel</th>}
-                        <th className="p-4 font-medium">Lagerort</th>
-                    </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-500/10">
-                    {relatedItems.map(item => {
-                        // Calculation Logic matching Flow 2
-                        let orderedQty = 0;
-                        let pending = 0;
-                        let over = 0;
-                        
-                        if (linkedPO) {
-                            const poItem = linkedPO.items.find(pi => pi.sku === item.sku);
-                            orderedQty = poItem?.quantityExpected || 0;
-                            pending = Math.max(0, orderedQty - item.quantity);
-                            over = Math.max(0, item.quantity - orderedQty);
-                        }
+            {/* PANE B: ITEM LIST & HISTORY (LEFT MAIN) */}
+            <div className="flex-[2] flex flex-col gap-6">
+                
+                {canReceiveMore && (
+                    <div className={`p-4 rounded-xl border flex items-center justify-between shadow-sm animate-in slide-in-from-top-2 ${
+                        isDark ? 'bg-amber-500/10 border-amber-500/20' : 'bg-amber-50 border-amber-200'
+                    }`}>
+                        <div className="flex items-center gap-4">
+                            <div className={`p-2 rounded-full ${isDark ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-700'}`}>
+                                <Truck size={24} />
+                            </div>
+                            <div>
+                                <h4 className={`font-bold ${isDark ? 'text-amber-400' : 'text-amber-800'}`}>
+                                    Bestellung noch offen
+                                </h4>
+                                <p className={`text-sm ${isDark ? 'text-amber-400/70' : 'text-amber-700/70'}`}>
+                                    Es wurden noch nicht alle Artikel geliefert.
+                                </p>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => linkedPO && onReceiveGoods(linkedPO.id)}
+                            className="px-4 py-2 bg-[#0077B5] hover:bg-[#00A0DC] text-white rounded-lg font-bold shadow-md transition-all flex items-center gap-2"
+                        >
+                            <PackagePlus size={18} />
+                            <span className="hidden sm:inline">Weitere Lieferung erfassen</span>
+                        </button>
+                    </div>
+                )}
 
-                        return (
-                        <tr key={item.id} className={isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}>
-                            <td className="p-4">
-                                <div className="font-medium">{item.name}</div>
-                                <div className="text-xs font-mono opacity-60">{item.sku}</div>
-                            </td>
+                {linkedPO && linkedMaster ? (
+                    <>
+                        <div className={`sticky top-0 z-30 pb-4 pt-2 -mx-2 px-2 transition-colors ${
+                            isDark ? 'bg-[#0f172a]' : 'bg-[#f8fafc]'
+                        }`}>
+                            <div className={`rounded-2xl border overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                                <div className={`p-4 border-b font-bold flex items-center gap-2 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                                    <BarChart3 size={18} className="text-[#0077B5]" /> Bestell-Status (Gesamtübersicht)
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left text-sm min-w-[600px]">
+                                        <thead className={`text-xs uppercase font-bold ${isDark ? 'bg-slate-950 text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
+                                            <tr>
+                                                <th className="px-4 py-2">Artikel</th>
+                                                <th className="px-4 py-2 w-24 text-center">Bestellt</th>
+                                                <th className="px-4 py-2 w-32 text-center">Gesamt geliefert</th>
+                                                <th className="px-4 py-2 w-20 text-center text-red-500">Offen</th>
+                                                <th className="px-4 py-2 w-20 text-center text-amber-500">Zu viel</th>
+                                                <th className="px-4 py-2 w-24 text-center">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-500/10">
+                                            {linkedPO.items.map(poItem => {
+                                                const ordered = poItem.quantityExpected;
+                                                const received = poItem.quantityReceived;
+                                                const pending = Math.max(0, ordered - received);
+                                                const over = Math.max(0, received - ordered);
+                                                const hasIssues = linkedMaster.deliveries.some(d => d.items.some(di => di.sku === poItem.sku && di.damageFlag));
+
+                                                return (
+                                                    <tr key={poItem.sku} className={isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}>
+                                                        <td className="px-4 py-2">
+                                                            <div className="font-bold text-sm">{poItem.name}</div>
+                                                            <div className="text-[10px] opacity-60 font-mono">{poItem.sku}</div>
+                                                        </td>
+                                                        <td className="px-4 py-2 text-center font-mono opacity-70 text-sm">{ordered}</td>
+                                                        <td className="px-4 py-2 text-center font-bold text-sm">{received}</td>
+                                                        <td className="px-4 py-2 text-center font-bold text-red-500 text-sm">
+                                                            {pending > 0 ? pending : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}
+                                                        </td>
+                                                        <td className="px-4 py-2 text-center font-bold text-amber-500 text-sm">
+                                                            {over > 0 ? over : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}
+                                                        </td>
+                                                        <td className="px-4 py-2 text-center">
+                                                            {renderItemStatusIcon(ordered, received, hasIssues)}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div className="flex items-center gap-2 mb-4 px-1">
+                                <Clock size={18} className="text-slate-500" />
+                                <h3 className="font-bold text-lg">Lieferhistorie</h3>
+                            </div>
                             
-                            {linkedPO && (
-                                <td className="p-4 text-center font-mono opacity-70">
-                                    {orderedQty > 0 ? orderedQty : '-'}
-                                </td>
-                            )}
+                            <div className="space-y-4">
+                                {visibleDeliveries.length === 0 ? (
+                                    <div className="p-8 text-center text-slate-500 border border-dashed rounded-xl">
+                                        Noch keine physischen Wareneingänge verbucht.
+                                    </div>
+                                ) : (
+                                    visibleDeliveries.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(delivery => {
+                                        const isExpanded = expandedDeliveryId === delivery.id;
+                                        const isCurrent = delivery.lieferscheinNr === selectedHeader.lieferscheinNr;
+                                        const snapshot = deliverySnapshots[delivery.id] || {};
 
-                            <td className="p-4 text-center font-bold">
-                                {item.quantity}
-                            </td>
+                                        return (
+                                            <div 
+                                                key={delivery.id} 
+                                                className={`rounded-xl border transition-all duration-300 overflow-hidden ${
+                                                    isCurrent 
+                                                        ? isDark ? 'border-[#0077B5] shadow-[0_0_15px_rgba(0,119,181,0.1)]' : 'border-[#0077B5] shadow-md ring-1 ring-[#0077B5]/20'
+                                                        : isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+                                                }`}
+                                            >
+                                                <button 
+                                                    onClick={() => toggleDeliveryExpand(delivery.id)}
+                                                    className={`w-full flex items-center justify-between p-4 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${
+                                                        isExpanded ? 'border-b border-slate-200 dark:border-slate-800' : ''
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-4">
+                                                        <div className={`p-2 rounded-lg ${isCurrent ? 'bg-[#0077B5] text-white' : (isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500')}`}>
+                                                            <Truck size={20} />
+                                                        </div>
+                                                        <div>
+                                                            <div className="font-bold text-sm flex items-center gap-2">
+                                                                {delivery.lieferscheinNr}
+                                                                {isCurrent && <span className="bg-[#0077B5] text-white text-[10px] px-1.5 py-0.5 rounded">AKTUELLE ANSICHT</span>}
+                                                            </div>
+                                                            <div className="text-xs opacity-60 flex items-center gap-2 mt-0.5">
+                                                                <Calendar size={12} /> {new Date(delivery.date).toLocaleDateString()}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-4">
+                                                        <span className="text-sm font-bold opacity-70">{delivery.items.length} Positionen</span>
+                                                        {isExpanded ? <ChevronUp size={20} className="opacity-50" /> : <ChevronDown size={20} className="opacity-50" />}
+                                                    </div>
+                                                </button>
 
-                            {linkedPO && (
-                                <td className="p-4 text-center font-bold text-red-500">
-                                    {pending > 0 ? pending : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}
-                                </td>
-                            )}
-                            
-                            {linkedPO && (
-                                <td className="p-4 text-center font-bold text-amber-500">
-                                    {over > 0 ? over : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}
-                                </td>
-                            )}
+                                                {isExpanded && (
+                                                    <div className={`p-0 ${isDark ? 'bg-slate-950/30' : 'bg-slate-50/50'}`}>
+                                                        <table className="w-full text-left text-sm min-w-[800px]">
+                                                            <thead className={`text-xs uppercase font-bold ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                                                                <tr>
+                                                                    <th className="px-6 py-2">Artikel</th>
+                                                                    <th className="px-6 py-2 w-20 text-center">Bestellt</th>
+                                                                    <th className="px-6 py-2 w-20 text-center opacity-70">Bisher</th>
+                                                                    <th className="px-6 py-2 w-32 text-center">Geliefert (Lieferschein)</th>
+                                                                    <th className="px-6 py-2 w-20 text-center">Gesamt</th>
+                                                                    <th className="px-6 py-2 w-20 text-center text-red-500">Offen</th>
+                                                                    <th className="px-6 py-2 w-20 text-center text-amber-500">Zu viel</th>
+                                                                    <th className="px-6 py-2 w-20 text-center">Status</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className="divide-y divide-slate-500/10">
+                                                                {delivery.items.map(dItem => {
+                                                                    const poItem = linkedPO.items.find(pi => pi.sku === dItem.sku);
+                                                                    const itemName = poItem ? poItem.name : dItem.sku; 
+                                                                    let ordered, previous, current, pending, over, totalReceived;
 
-                            <td className="p-4 text-xs">{item.targetLocation}</td>
-                        </tr>
-                    )})}
-                    </tbody>
-                </table>
-                </div>
-            </div>
+                                                                    if (dItem.orderedQty !== undefined) {
+                                                                        ordered = dItem.orderedQty;
+                                                                        previous = dItem.previousReceived || 0;
+                                                                        current = dItem.receivedQty;
+                                                                        pending = dItem.offen || 0;
+                                                                        over = dItem.zuViel || 0;
+                                                                        totalReceived = previous + current;
+                                                                    } else {
+                                                                        ordered = poItem ? poItem.quantityExpected : 0;
+                                                                        const data = snapshot[dItem.sku] || { pre: 0, current: dItem.receivedQty, post: dItem.receivedQty };
+                                                                        previous = data.pre;
+                                                                        current = dItem.receivedQty;
+                                                                        totalReceived = data.post;
+                                                                        pending = Math.max(0, ordered - totalReceived);
+                                                                        over = Math.max(0, totalReceived - ordered);
+                                                                    }
+
+                                                                    return (
+                                                                        <tr key={dItem.sku} className={isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}>
+                                                                            <td className="px-6 py-2">
+                                                                                <div className="font-bold text-sm">{itemName}</div>
+                                                                                <div className="text-[10px] opacity-60 font-mono">{dItem.sku}</div>
+                                                                                {dItem.manualAddFlag && (
+                                                                                    <div className={`mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border ${isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                                                                                        <AlertTriangle size={8} /> Manuell
+                                                                                    </div>
+                                                                                )}
+                                                                            </td>
+                                                                            <td className="px-6 py-2 text-center font-mono opacity-70 text-sm">{ordered > 0 ? ordered : '-'}</td>
+                                                                            <td className="px-6 py-2 text-center font-mono text-sm opacity-50">{previous > 0 ? previous : '-'}</td>
+                                                                            <td className="px-6 py-2 text-center font-bold text-sm">{current > 0 ? `+${current}` : '0'}</td>
+                                                                            <td className="px-6 py-2 text-center font-mono font-bold text-sm">{totalReceived}</td>
+                                                                            <td className="px-6 py-2 text-center font-bold text-red-500 text-sm">{pending > 0 ? pending : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}</td>
+                                                                            <td className="px-6 py-2 text-center font-bold text-amber-500 text-sm">{over > 0 ? over : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}</td>
+                                                                            <td className="px-6 py-2 text-center">{renderItemStatusIcon(ordered, totalReceived, dItem.damageFlag)}</td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        </div>
+                    </>
+                ) : (
+                    <div className={`rounded-2xl border overflow-hidden flex flex-col min-h-[400px] ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                        <div className={`p-4 border-b font-bold flex items-center gap-2 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                            <Package size={18} className="text-slate-500" /> Enthaltene Artikel
+                        </div>
+                        <div className="flex-1 overflow-y-auto">
+                            <table className="w-full text-left text-sm min-w-[600px]">
+                                <thead className={`sticky top-0 backdrop-blur-md z-10 ${isDark ? 'bg-slate-900/80' : 'bg-white/80'}`}>
+                                <tr className="text-slate-500">
+                                    <th className="p-4 font-medium">Artikel</th>
+                                    <th className="p-4 font-medium text-center">Menge</th>
+                                    <th className="p-4 font-medium">Lagerort</th>
+                                </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-500/10">
+                                {relatedItems.map(item => (
+                                    <tr key={item.id} className={isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}>
+                                        <td className="p-4">
+                                            <div className="font-medium">{item.name}</div>
+                                            <div className="text-xs font-mono opacity-60">{item.sku}</div>
+                                        </td>
+                                        <td className="p-4 text-center font-bold">
+                                            {item.quantity}
+                                        </td>
+                                        <td className="p-4 text-xs">{item.targetLocation}</td>
+                                    </tr>
+                                ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* PANE C: TRACEABILITY TIMELINE (RIGHT SIDE) */}
             <div className={`flex-1 rounded-2xl border flex flex-col overflow-hidden min-h-[400px] ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-            <div className={`p-4 border-b font-bold flex items-center gap-2 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
-                <Clock size={18} className="text-slate-500" /> Historie & Notizen
-            </div>
-            
-            {/* Timeline Feed */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                {relatedComments.length === 0 ? (
-                <div className="text-center py-10 text-slate-500 text-sm italic">Keine Einträge vorhanden.</div>
-                ) : (
-                relatedComments.map(c => (
-                    <div key={c.id} className="relative pl-6 border-l border-slate-500/20 last:border-0 pb-2">
-                    <div className={`absolute -left-3 top-0 w-6 h-6 rounded-full flex items-center justify-center border-2 ${
-                        isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'
-                    }`}>
-                        {c.type === 'email' && <Mail size={12} className="text-blue-500" />}
-                        {c.type === 'call' && <Phone size={12} className="text-purple-500" />}
-                        {c.type === 'note' && <StickyNote size={12} className="text-amber-500" />}
-                    </div>
-                    <div className="space-y-1">
-                        <div className="flex justify-between items-start text-xs">
-                            <span className="font-bold">{c.userName}</span>
-                            <span className="text-slate-500">{new Date(c.timestamp).toLocaleString()}</span>
+                <div className={`p-4 border-b font-bold flex items-center gap-2 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                    <Clock size={18} className="text-slate-500" /> Historie & Notizen
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                    {relatedComments.length === 0 ? (
+                    <div className="text-center py-10 text-slate-500 text-sm italic">Keine Einträge vorhanden.</div>
+                    ) : (
+                    relatedComments.map(c => (
+                        <div key={c.id} className="relative pl-6 border-l border-slate-500/20 last:border-0 pb-2">
+                        <div className={`absolute -left-3 top-0 w-6 h-6 rounded-full flex items-center justify-center border-2 ${
+                            isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'
+                        }`}>
+                            {c.type === 'email' && <Mail size={12} className="text-blue-500" />}
+                            {c.type === 'call' && <Phone size={12} className="text-purple-500" />}
+                            {c.type === 'note' && <StickyNote size={12} className="text-amber-500" />}
                         </div>
-                        <div className={`p-3 rounded-xl text-sm ${isDark ? 'bg-slate-800' : 'bg-slate-50'}`}>
-                        {c.message}
+                        <div className="space-y-1">
+                            <div className="flex justify-between items-start text-xs">
+                                <span className="font-bold">{c.userName}</span>
+                                <span className="text-slate-500">{new Date(c.timestamp).toLocaleString()}</span>
+                            </div>
+                            <div className={`p-3 rounded-xl text-sm ${isDark ? 'bg-slate-800' : 'bg-slate-50'}`}>
+                            {c.message}
+                            </div>
                         </div>
-                    </div>
-                    </div>
-                ))
-                )}
-            </div>
+                        </div>
+                    ))
+                    )}
+                </div>
 
-            {/* Input Area */}
-            <div className={`p-4 border-t ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
-                <div className="flex gap-2 mb-2">
-                    <TypeButton active={commentType === 'note'} icon={<StickyNote size={14} />} label="Notiz" onClick={() => setCommentType('note')} isDark={isDark} />
-                    <TypeButton active={commentType === 'email'} icon={<Mail size={14} />} label="Email" onClick={() => setCommentType('email')} isDark={isDark} />
-                    <TypeButton active={commentType === 'call'} icon={<Phone size={14} />} label="Tel." onClick={() => setCommentType('call')} isDark={isDark} />
+                <div className={`p-4 border-t ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                    <div className="flex gap-2 mb-2">
+                        <TypeButton active={commentType === 'note'} icon={<StickyNote size={14} />} label="Notiz" onClick={() => setCommentType('note')} isDark={isDark} />
+                        <TypeButton active={commentType === 'email'} icon={<Mail size={14} />} label="Email" onClick={() => setCommentType('email')} isDark={isDark} />
+                        <TypeButton active={commentType === 'call'} icon={<Phone size={14} />} label="Tel." onClick={() => setCommentType('call')} isDark={isDark} />
+                    </div>
+                    <div className="flex gap-2">
+                    <textarea 
+                        value={commentInput}
+                        onChange={(e) => setCommentInput(e.target.value)}
+                        placeholder="Neuer Eintrag..."
+                        className={`flex-1 rounded-xl p-3 text-base md:text-sm resize-none h-20 outline-none focus:ring-2 focus:ring-blue-500/20 border ${isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300'}`}
+                    />
+                    <button 
+                        onClick={handlePostComment}
+                        disabled={!commentInput.trim()}
+                        className="self-end p-3 rounded-xl bg-[#0077B5] text-white hover:bg-[#00A0DC] disabled:opacity-50 disabled:bg-slate-500"
+                    >
+                        <Send size={18} />
+                    </button>
+                    </div>
                 </div>
-                <div className="flex gap-2">
-                <textarea 
-                    value={commentInput}
-                    onChange={(e) => setCommentInput(e.target.value)}
-                    placeholder="Neuer Eintrag..."
-                    className={`flex-1 rounded-xl p-3 text-base md:text-sm resize-none h-20 outline-none focus:ring-2 focus:ring-blue-500/20 border ${isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300'}`}
-                />
-                <button 
-                    onClick={handlePostComment}
-                    disabled={!commentInput.trim()}
-                    className="self-end p-3 rounded-xl bg-[#0077B5] text-white hover:bg-[#00A0DC] disabled:opacity-50 disabled:bg-slate-500"
-                >
-                    <Send size={18} />
-                </button>
-                </div>
-            </div>
             </div>
         </div>
       )}
 
-      {/* NEW TICKET TAB */}
+      {/* TICKET TAB CONTENT */}
       {activeTab === 'tickets' && (
-        <div className="flex-1 overflow-y-auto min-h-0 animate-in fade-in slide-in-from-right-4">
-            <div className="max-w-4xl mx-auto space-y-6">
-                <div className="flex justify-end">
-                    <button 
-                        onClick={() => setShowNewTicketModal(true)}
-                        className="px-4 py-2 bg-[#0077B5] hover:bg-[#00A0DC] text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-500/20 flex items-center gap-2 active:scale-95 transition-all"
-                    >
-                        <Plus size={16} /> Neuen Fall eröffnen
-                    </button>
-                </div>
-
-                {relatedTickets.length === 0 ? (
-                    <div className={`p-10 rounded-2xl border border-dashed text-center ${isDark ? 'border-slate-800 text-slate-500' : 'border-slate-300 text-slate-400'}`}>
-                        <MessageSquare size={40} className="mx-auto mb-4 opacity-50" />
-                        <h3 className="font-bold text-lg mb-1">Keine Fälle vorhanden</h3>
-                        <p className="text-sm">Für diesen Lieferschein wurden noch keine Reklamationen oder Tickets erstellt.</p>
+        <div className="flex-1 flex flex-col lg:flex-row gap-6 min-h-0 animate-in fade-in slide-in-from-left-4">
+           {/* LEFT: Ticket List */}
+           <div className={`flex-1 rounded-2xl border flex flex-col overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+              <div className={`p-4 border-b flex justify-between items-center ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                 <h3 className="font-bold flex items-center gap-2">
+                    <AlertCircle size={18} className="text-[#0077B5]" /> Offene Fälle
+                 </h3>
+                 <button 
+                    onClick={() => setShowNewTicketModal(true)}
+                    className="text-xs bg-[#0077B5] text-white px-3 py-1.5 rounded-lg font-bold hover:bg-[#00A0DC] transition-colors flex items-center gap-1"
+                 >
+                    <Plus size={14} /> Neuer Fall
+                 </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                 {relatedTickets.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60 p-8 text-center">
+                        <CheckCircle2 size={48} className="mb-2" />
+                        <p className="text-sm font-medium">Keine Probleme gemeldet.</p>
+                        <p className="text-xs opacity-70 mt-1">Erstellen Sie einen neuen Fall für Reklamationen.</p>
                     </div>
-                ) : (
-                    <div className="space-y-4">
-                        {relatedTickets.map(ticket => {
-                            const isExpanded = expandedTicketId === ticket.id;
-                            const isOpen = ticket.status === 'Open';
+                 ) : (
+                    relatedTickets.map(ticket => (
+                       <button
+                          key={ticket.id}
+                          onClick={() => setExpandedTicketId(ticket.id)}
+                          className={`w-full text-left p-3 rounded-xl border transition-all ${
+                             expandedTicketId === ticket.id 
+                                ? isDark ? 'bg-slate-800 border-blue-500 ring-1 ring-blue-500' : 'bg-blue-50 border-blue-500 ring-1 ring-blue-500'
+                                : isDark ? 'bg-slate-900 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-200 hover:border-slate-300'
+                          }`}
+                       >
+                          <div className="flex justify-between items-start mb-1">
+                             <div className="font-bold text-sm truncate pr-2">{ticket.subject}</div>
+                             {ticket.status === 'Closed' ? (
+                                <span className="shrink-0 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-500/10 text-slate-500 border border-slate-500/20 uppercase">Geschlossen</span>
+                             ) : (
+                                <span className="shrink-0 px-2 py-0.5 rounded text-[10px] font-bold bg-green-500/10 text-green-600 border border-green-500/20 uppercase">Offen</span>
+                             )}
+                          </div>
+                          <div className="flex items-center gap-2 text-xs opacity-70 mb-2">
+                             <span>ID: {ticket.id.slice(0,8)}</span>
+                             <span>•</span>
+                             <span>{new Date(ticket.messages[0].timestamp).toLocaleDateString()}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                                ticket.priority === 'Urgent' ? 'bg-red-500/10 text-red-500 border-red-500/20' : 
+                                ticket.priority === 'High' ? 'bg-orange-500/10 text-orange-500 border-orange-500/20' : 
+                                'bg-slate-500/10 text-slate-500 border-slate-500/20'
+                             }`}>
+                                {ticket.priority}
+                             </span>
+                             <div className="ml-auto text-xs text-[#0077B5] font-medium flex items-center gap-1">
+                                {ticket.messages.length} Nachrichten <ChevronRight size={12} />
+                             </div>
+                          </div>
+                       </button>
+                    ))
+                 )}
+              </div>
+           </div>
+
+           {/* RIGHT: Chat View */}
+           <div className={`flex-[2] rounded-2xl border flex flex-col overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+              {selectedTicket ? (
+                  <>
+                    {/* Chat Header */}
+                    <div className={`p-4 border-b flex justify-between items-center ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                        <div>
+                            <div className="flex items-center gap-2 mb-1">
+                                <h3 className="font-bold text-lg">{selectedTicket.subject}</h3>
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                                    selectedTicket.priority === 'Urgent' ? 'bg-red-500/10 text-red-500 border-red-500/20' : 
+                                    selectedTicket.priority === 'High' ? 'bg-orange-500/10 text-orange-500 border-orange-500/20' : 
+                                    'bg-slate-500/10 text-slate-500 border-slate-500/20'
+                                }`}>
+                                    {selectedTicket.priority}
+                                </span>
+                            </div>
+                            <div className="text-xs opacity-60 flex items-center gap-2">
+                                <span>Ticket ID: {selectedTicket.id}</span>
+                                <span>•</span>
+                                <span>Erstellt: {new Date(selectedTicket.messages[0].timestamp).toLocaleString()}</span>
+                            </div>
+                        </div>
+                        {selectedTicket.status === 'Closed' ? (
+                            <button 
+                                onClick={() => handleReopenTicket(selectedTicket)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors flex items-center gap-2 ${isDark ? 'bg-slate-800 border-slate-700 hover:bg-slate-700' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
+                            >
+                                <Unlock size={14} /> Wiedereröffnen
+                            </button>
+                        ) : (
+                            <div className="px-3 py-1.5 rounded-lg bg-green-500/10 text-green-600 border border-green-500/20 text-xs font-bold flex items-center gap-2">
+                                <Unlock size={14} /> Offen
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Messages Area */}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        {selectedTicket.messages.map(msg => {
+                            const isSystem = msg.type === 'system' || msg.author === 'System';
+                            const isMe = msg.type === 'user' && msg.author !== 'System'; // Assuming current user is standard user
                             
+                            if (isSystem) {
+                                return (
+                                    <div key={msg.id} className="flex justify-center my-4">
+                                        <div className={`text-xs py-1 px-3 rounded-full ${isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+                                            {msg.text} • {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                        </div>
+                                    </div>
+                                );
+                            }
+
                             return (
-                                <div 
-                                    key={ticket.id}
-                                    className={`rounded-2xl border transition-all duration-300 ${
-                                        isDark 
-                                        ? 'bg-slate-900 border-slate-800' 
-                                        : 'bg-white border-slate-200 shadow-sm'
-                                    }`}
-                                >
-                                    {/* Ticket Card Header */}
-                                    <button 
-                                        onClick={() => toggleTicketExpand(ticket.id)}
-                                        className="w-full text-left p-5 flex items-start gap-4 hover:opacity-80 transition-opacity"
-                                    >
-                                        <div className={`mt-1 p-2 rounded-lg ${
-                                            isOpen 
-                                            ? isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-100 text-red-600'
-                                            : isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500'
-                                        }`}>
-                                            {isOpen ? <AlertCircle size={20} /> : <CheckCircle2 size={20} />}
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className="flex justify-between items-start">
-                                                <div className="flex items-center gap-2">
-                                                    <h3 className="font-bold text-lg">{ticket.subject}</h3>
-                                                    {ticket.priority === 'High' && <span className="text-[10px] font-bold bg-orange-500 text-white px-2 py-0.5 rounded-full">HOCH</span>}
-                                                    {ticket.priority === 'Urgent' && <span className="text-[10px] font-bold bg-red-600 text-white px-2 py-0.5 rounded-full animate-pulse">DRINGEND</span>}
-                                                </div>
-                                                {isExpanded ? <ChevronUp size={20} className="text-slate-500" /> : <ChevronDown size={20} className="text-slate-500" />}
-                                            </div>
-                                            <div className="flex items-center gap-3 mt-1 text-sm">
-                                                <span className={`px-2 py-0.5 rounded text-xs font-bold border ${
-                                                    isOpen
-                                                    ? 'bg-emerald-500 text-white border-emerald-600'
-                                                    : 'bg-slate-500 text-white border-slate-600'
-                                                }`}>
-                                                    {ticket.status === 'Open' ? 'Offen' : 'Geschlossen'}
-                                                </span>
-                                                <span className="text-slate-500 flex items-center gap-1">
-                                                    <Clock size={12} /> Letztes Update: {new Date(ticket.messages[ticket.messages.length - 1]?.timestamp || 0).toLocaleString()}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </button>
-
-                                    {/* Expanded Message History (Chat Log) */}
-                                    {isExpanded && (
-                                        <div className={`border-t p-5 space-y-4 ${isDark ? 'bg-slate-950/30 border-slate-800' : 'bg-slate-50/50 border-slate-100'}`}>
-                                            <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider mb-4">Verlauf</h4>
-                                            
-                                            {ticket.messages.map(msg => {
-                                                const isSystem = msg.type === 'system';
-                                                const isMe = msg.author === 'Admin User';
-                                                
-                                                if (isSystem) {
-                                                    return (
-                                                        <div key={msg.id} className="flex justify-center my-4">
-                                                            <span className="text-xs italic text-slate-400 bg-slate-200/10 px-3 py-1 rounded-full">
-                                                                {msg.text} • {new Date(msg.timestamp).toLocaleDateString()}
-                                                            </span>
-                                                        </div>
-                                                    );
-                                                }
-
-                                                return (
-                                                    <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                                                        <div className="text-[10px] text-slate-500 mb-1 px-1">
-                                                            {msg.author} • {new Date(msg.timestamp).toLocaleString()}
-                                                        </div>
-                                                        <div className={`p-3 rounded-2xl max-w-[85%] text-sm leading-relaxed shadow-sm ${
-                                                            isMe 
-                                                                ? 'bg-[#0077B5] text-white rounded-tr-none' 
-                                                                : isDark ? 'bg-slate-800 text-slate-200 rounded-tl-none' : 'bg-white border text-slate-700 rounded-tl-none'
-                                                        }`}>
-                                                            {msg.text}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-
-                                            {/* Action Area: Open vs Closed State */}
-                                            {isOpen ? (
-                                                <div className="mt-6 pt-4 border-t border-slate-500/10 space-y-3">
-                                                    <textarea 
-                                                        value={replyText}
-                                                        onChange={(e) => setReplyText(e.target.value)}
-                                                        placeholder="Antwort verfassen..."
-                                                        className={`w-full rounded-xl px-4 py-3 text-sm border outline-none focus:ring-2 focus:ring-blue-500/20 resize-none h-24 transition-all ${
-                                                            isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'
-                                                        }`}
-                                                    />
-                                                    <div className="flex items-center justify-end gap-3">
-                                                        <button 
-                                                            onClick={() => handleReplyTicket(ticket, false)}
-                                                            disabled={!replyText.trim()}
-                                                            className="px-4 py-2.5 bg-[#0077B5] hover:bg-[#00A0DC] text-white rounded-xl font-bold text-sm shadow-md shadow-blue-500/20 disabled:opacity-50 disabled:shadow-none transition-all flex items-center gap-2"
-                                                        >
-                                                            <CornerDownRight size={16} /> Antworten / Speichern
-                                                        </button>
-                                                        <button 
-                                                            onClick={() => handleReplyTicket(ticket, true)}
-                                                            disabled={!replyText.trim()}
-                                                            className="px-4 py-2.5 border-2 border-emerald-500 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-xl font-bold text-sm transition-all flex items-center gap-2 disabled:opacity-50"
-                                                        >
-                                                            <CheckSquare size={16} /> Speichern & Fall schließen
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <div className={`mt-6 p-4 rounded-xl border flex items-center justify-between animate-in fade-in slide-in-from-bottom-2 ${
-                                                    isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-200'
-                                                }`}>
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="p-2 bg-slate-500/10 rounded-full text-slate-500">
-                                                            <CheckCircle2 size={20} />
-                                                        </div>
-                                                        <span className="font-bold text-slate-500">Dieser Fall ist geschlossen.</span>
-                                                    </div>
-                                                    <button 
-                                                        onClick={() => handleReopenTicket(ticket)}
-                                                        className="px-4 py-2 text-sm font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-all flex items-center gap-2"
-                                                    >
-                                                        <RefreshCw size={14} /> Fall wiedereröffnen
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
+                                <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                                    <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${
+                                        isMe 
+                                        ? 'bg-[#0077B5] text-white rounded-tr-sm' 
+                                        : isDark ? 'bg-slate-800 text-slate-200 rounded-tl-sm' : 'bg-slate-100 text-slate-800 rounded-tl-sm'
+                                    }`}>
+                                        {msg.text}
+                                    </div>
+                                    <div className="text-[10px] opacity-50 mt-1 px-1">
+                                        {msg.author} • {new Date(msg.timestamp).toLocaleString()}
+                                    </div>
                                 </div>
                             );
                         })}
                     </div>
-                )}
-            </div>
+
+                    {/* Reply Area */}
+                    {selectedTicket.status === 'Open' ? (
+                        <div className={`p-4 border-t ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                            <div className="flex gap-2">
+                                <textarea 
+                                    value={replyText}
+                                    onChange={(e) => setReplyText(e.target.value)}
+                                    placeholder="Antwort schreiben..."
+                                    className={`flex-1 rounded-xl p-3 text-sm resize-none h-20 outline-none focus:ring-2 focus:ring-blue-500/20 border ${isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300'}`}
+                                />
+                                <div className="flex flex-col gap-2">
+                                    <button 
+                                        onClick={() => handleReplyTicket(selectedTicket, false)}
+                                        disabled={!replyText.trim()}
+                                        className="p-3 rounded-xl bg-[#0077B5] text-white hover:bg-[#00A0DC] disabled:opacity-50 disabled:bg-slate-500"
+                                        title="Senden"
+                                    >
+                                        <Send size={18} />
+                                    </button>
+                                    <button 
+                                        onClick={() => handleReplyTicket(selectedTicket, true)}
+                                        className={`p-3 rounded-xl border transition-colors ${isDark ? 'bg-slate-800 border-slate-700 hover:bg-red-500/20 hover:text-red-400' : 'bg-white border-slate-200 hover:bg-red-50 hover:text-red-600'}`}
+                                        title="Senden & Schließen"
+                                    >
+                                        <Lock size={18} />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className={`p-6 border-t text-center opacity-60 ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                            <Lock size={24} className="mx-auto mb-2 opacity-50" />
+                            <p className="text-sm font-medium">Dieser Fall ist geschlossen.</p>
+                        </div>
+                    )}
+                  </>
+              ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60 p-8 text-center">
+                      <MessageSquare size={48} className="mb-4" />
+                      <p className="font-bold text-lg">Kein Fall ausgewählt</p>
+                      <p className="text-sm">Wählen Sie einen Fall aus der Liste oder erstellen Sie einen neuen.</p>
+                  </div>
+              )}
+           </div>
         </div>
       )}
 

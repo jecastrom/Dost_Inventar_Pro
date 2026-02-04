@@ -1,19 +1,26 @@
 
-import React, { useState } from 'react';
-import { StockItem, Theme } from '../types';
-import { Plus, Minus, Hash, PackagePlus, MapPin, Pencil } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { 
+  Search, PlusCircle, Filter, MapPin, PackagePlus, 
+  Minus, Plus, Hash, Pencil 
+} from 'lucide-react';
+import { StockItem, Theme, ViewMode } from '../types';
+import { ItemModal } from './ItemModal';
+
+// --- COPIED STOCK CARD COMPONENT (ISOLATED) ---
+// This ensures changes to the dashboard card don't break the inventory view and vice versa.
 
 interface StockCardProps {
   item: StockItem;
   onUpdate: (id: string, newLevel: number) => void;
   onAddStock: () => void;
   onLogStock: (itemId: string, itemName: string, action: 'add' | 'remove', quantity: number, source?: string, context?: 'normal' | 'project' | 'manual' | 'po-normal' | 'po-project') => void;
-  onClick: (item: StockItem) => void; // Renamed from onEdit as requested
+  onClick: (item: StockItem) => void;
   viewMode: 'grid' | 'list';
   theme: Theme;
 }
 
-export const StockCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddStock, onLogStock, onClick, viewMode, theme }) => {
+const InventoryProductCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddStock, onLogStock, onClick, viewMode, theme }) => {
   const [bulkInput, setBulkInput] = useState('');
   const isDark = theme === 'dark';
 
@@ -23,29 +30,23 @@ export const StockCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddStock
     const diff = newLevel - currentLevel;
 
     if (diff !== 0) {
-      // 1. Log the Action
       const action = diff > 0 ? 'add' : 'remove';
       const absQty = Math.abs(diff);
-      
-      console.log(`Logged ${action.toUpperCase()} of ${absQty} items`);
-      onLogStock(item.id, item.name, action, absQty, 'Manuell', 'manual');
-
-      // 2. Update State
+      onLogStock(item.id, item.name, action, absQty, 'Manuell (Bestand)', 'manual');
       onUpdate(item.id, newLevel);
     }
   };
 
   const handleClick = (e: React.MouseEvent, sign: number) => {
-    e.stopPropagation(); // Prevent card click
+    e.stopPropagation();
     const val = parseInt(bulkInput);
     const qty = (!isNaN(val) && val > 0) ? val : 1;
-    
     handleAdjust(qty * sign);
     setBulkInput('');
   };
 
   const handleBulkAdjust = (e: React.MouseEvent, sign: number) => {
-    e.stopPropagation(); // Prevent card click
+    e.stopPropagation();
     const val = parseInt(bulkInput);
     if (!isNaN(val) && val > 0) {
       handleAdjust(val * sign);
@@ -71,7 +72,6 @@ export const StockCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddStock
         }`}
         onClick={() => onClick(item)}
       >
-        {/* Color Indicator */}
         <div className={`hidden sm:block w-2 h-10 rounded-full shrink-0 ${status.bg.replace('/20', '')}`} />
         
         <div className="flex-1 min-w-0">
@@ -135,7 +135,6 @@ export const StockCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddStock
         }`}
         onClick={() => onClick(item)}
     >
-      {/* Header Info */}
       <div className="flex justify-between items-start gap-2">
         <div className="min-w-0">
           <h3 className={`text-[15px] font-semibold leading-tight group-hover:text-[#0077B5] transition-colors line-clamp-2 min-h-[40px] ${
@@ -161,7 +160,6 @@ export const StockCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddStock
         </div>
       </div>
 
-      {/* Stock Visualizer */}
       <div className="flex items-center justify-between py-2">
         <div className={`px-4 py-1.5 rounded-full ${status.bg} flex items-center gap-2 transition-all duration-500`}>
           <div className={`w-2 h-2 rounded-full animate-pulse ${status.bg.replace('/20', '')}`} />
@@ -174,10 +172,8 @@ export const StockCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddStock
         </span>
       </div>
 
-      {/* Controls */}
       <div className={`mt-auto pt-4 border-t transition-colors ${isDark ? 'border-slate-700/50' : 'border-[#CACCCE]/40'}`} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-2">
-          {/* Quick Actions */}
           <div className="flex items-center gap-1.5">
             <button 
               onClick={(e) => handleClick(e, -1)}
@@ -197,7 +193,6 @@ export const StockCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddStock
             </button>
           </div>
 
-          {/* Bulk Action */}
           <div className="flex-1 flex items-center gap-1">
             <div className="relative flex-1">
               <input 
@@ -235,6 +230,146 @@ export const StockCard: React.FC<StockCardProps> = ({ item, onUpdate, onAddStock
           </div>
         </div>
       </div>
+    </div>
+  );
+};
+
+// --- MAIN INVENTORY VIEW COMPONENT ---
+
+interface InventoryViewProps {
+  inventory: StockItem[];
+  theme: Theme;
+  viewMode: ViewMode;
+  onUpdate: (id: string, newLevel: number) => void;
+  onUpdateItem: (item: StockItem) => void;
+  onCreateItem: (item: StockItem) => void;
+  onAddStock: () => void;
+  onLogStock: (itemId: string, itemName: string, action: 'add' | 'remove', quantity: number, source?: string, context?: 'normal' | 'project' | 'manual' | 'po-normal' | 'po-project') => void;
+}
+
+export const InventoryView: React.FC<InventoryViewProps> = ({
+  inventory,
+  theme,
+  viewMode,
+  onUpdate,
+  onUpdateItem,
+  onCreateItem,
+  onAddStock,
+  onLogStock
+}) => {
+  const isDark = theme === 'dark';
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isItemModalOpen, setIsItemModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<StockItem | null>(null);
+
+  // Filter Logic
+  const filteredItems = useMemo(() => {
+    const term = searchTerm.toLowerCase();
+    return inventory.filter(i => 
+      i.name.toLowerCase().includes(term) || 
+      i.sku.toLowerCase().includes(term) ||
+      (i.system && i.system.toLowerCase().includes(term))
+    );
+  }, [inventory, searchTerm]);
+
+  // Handlers
+  const handleOpenNewItem = () => {
+    setEditingItem(null);
+    setIsItemModalOpen(true);
+  };
+
+  const handleOpenEditItem = (item: StockItem) => {
+    setEditingItem(item);
+    setIsItemModalOpen(true);
+  };
+
+  const handleSaveItem = (item: StockItem) => {
+    if (editingItem) {
+      onUpdateItem(item);
+    } else {
+      onCreateItem(item);
+    }
+    setIsItemModalOpen(false);
+  };
+
+  return (
+    <div className="h-full flex flex-col animate-in fade-in slide-in-from-right-8 duration-300">
+      
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row justify-between items-end gap-4 mb-6">
+        <div>
+           <h2 className="text-2xl font-bold mb-1">Artikel & Bestand</h2>
+           <p className="text-slate-500 text-sm">Verwalten Sie Ihr gesamtes Inventar an einem Ort.</p>
+        </div>
+        <div className="flex items-center gap-2">
+            <button
+                onClick={handleOpenNewItem}
+                className={`px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg ${
+                    isDark 
+                     ? 'bg-[#0077B5] hover:bg-[#00A0DC] text-white shadow-blue-500/20' 
+                     : 'bg-[#0077B5] hover:bg-[#00A0DC] text-white shadow-blue-500/20'
+                }`}
+            >
+                <PlusCircle size={20} /> Neuen Artikel
+            </button>
+        </div>
+      </div>
+
+      {/* Large Search Bar */}
+      <div className="mb-6 flex gap-4">
+        <div className="relative flex-1 group">
+            <Search className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${isDark ? 'text-slate-500 group-focus-within:text-blue-400' : 'text-slate-400 group-focus-within:text-[#0077B5]'}`} size={20} />
+            <input 
+              type="text"
+              placeholder="Suchen nach Name, SKU oder System..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className={`w-full border rounded-2xl pl-12 pr-4 py-4 text-lg transition-all focus:outline-none focus:ring-2 ${
+                isDark 
+                  ? 'bg-slate-900/50 border-slate-800 text-slate-100 placeholder:text-slate-600 focus:ring-blue-500/30' 
+                  : 'bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 focus:ring-[#0077B5]/20 shadow-sm'
+              }`}
+            />
+        </div>
+        <button 
+            className={`hidden md:flex px-6 rounded-2xl border items-center justify-center gap-2 font-bold transition-all ${
+              isDark ? 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+            }`}
+        >
+            <Filter size={20} /> Filter
+        </button>
+      </div>
+
+      {/* Content Grid */}
+      <div className={`flex-1 overflow-y-auto min-h-0 pb-20 ${viewMode === 'grid' ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4' : 'flex flex-col gap-2'}`}>
+          {filteredItems.map(item => (
+             <InventoryProductCard 
+                key={item.id} 
+                item={item} 
+                onUpdate={onUpdate} 
+                onAddStock={onAddStock}
+                onLogStock={onLogStock}
+                onClick={handleOpenEditItem}
+                viewMode={viewMode}
+                theme={theme}
+             />
+          ))}
+          {filteredItems.length === 0 && (
+              <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-500 opacity-60">
+                  <PackagePlus size={64} className="mb-4 opacity-50" />
+                  <p className="text-lg font-medium">Keine Artikel gefunden.</p>
+                  <p className="text-sm">Passen Sie Ihre Suche an oder erstellen Sie einen neuen Artikel.</p>
+              </div>
+          )}
+      </div>
+
+      {/* Shared Item Modal */}
+      <ItemModal 
+         isOpen={isItemModalOpen}
+         onClose={() => setIsItemModalOpen(false)}
+         onSave={handleSaveItem}
+         initialData={editingItem}
+      />
     </div>
   );
 };

@@ -1,43 +1,47 @@
+
 import React, { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   Search, Filter, Calendar, Truck, ChevronRight, 
-  X, FileText, Trash2, Pencil
+  X, FileText, Pencil, ClipboardCheck, Archive, CheckSquare, Square, PackagePlus,
+  CheckCircle2, Ban
 } from 'lucide-react';
-import { PurchaseOrder, Theme } from '../types';
-import { MOCK_PURCHASE_ORDERS } from '../data';
+import { PurchaseOrder, Theme, ReceiptMaster } from '../types';
 
 interface OrderManagementProps {
-  orders?: PurchaseOrder[]; // Made optional since we are ignoring it for this fix
+  orders: PurchaseOrder[]; // Required prop for Single Source of Truth
   theme: Theme;
-  onDelete: (id: string) => void;
+  onArchive: (id: string) => void;
   onEdit: (order: PurchaseOrder) => void;
+  onReceiveGoods: (id: string) => void;
+  onQuickReceipt: (id: string) => void;
+  receiptMasters: ReceiptMaster[];
 }
 
-export const OrderManagement: React.FC<OrderManagementProps> = ({ theme, onDelete, onEdit }) => {
+export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme, onArchive, onEdit, onReceiveGoods, onQuickReceipt, receiptMasters }) => {
   const isDark = theme === 'dark';
   const [searchTerm, setSearchTerm] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
   
-  // -- State Initialization --
-  // FIXED: Strictly use MOCK data for initialization to decouple from parent props
-  // This ensures the list doesn't "reset" when the parent re-renders
-  const [orders, setOrders] = useState<PurchaseOrder[]>(MOCK_PURCHASE_ORDERS);
-
-  // NOTE: Removed useEffect that synced propOrders to state. 
-  // Local state is now the single source of truth for this view.
-
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
+
+  // -- Confirmation Modal State --
+  const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<string | null>(null);
 
   // -- Computed --
   const filteredOrders = useMemo(() => {
     return orders.filter(o => {
+      // Archive Filter Logic
+      if (!showArchived && o.isArchived) return false;
+      
       const term = searchTerm.toLowerCase();
       return (
         o.id.toLowerCase().includes(term) ||
         o.supplier.toLowerCase().includes(term)
       );
     }).sort((a, b) => new Date(b.dateCreated).getTime() - new Date(a.dateCreated).getTime());
-  }, [orders, searchTerm]);
+  }, [orders, searchTerm, showArchived]);
 
   // -- Status Badge Helper --
   const getStatusStyle = (status: string) => {
@@ -47,9 +51,14 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ theme, onDelet
           ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
           : 'bg-emerald-100 text-emerald-700 border-emerald-200';
       case 'Teilweise geliefert':
+        // Amber/Orange for Partial Delivery
         return isDark 
-          ? 'bg-red-500/10 text-red-400 border-red-500/20' 
-          : 'bg-red-100 text-red-700 border-red-200';
+          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
+          : 'bg-amber-100 text-amber-700 border-amber-200';
+      case 'Projekt':
+        return isDark 
+          ? 'bg-blue-900/30 text-blue-400 border-blue-900' 
+          : 'bg-blue-100 text-blue-700 border-blue-200';
       case 'Abgeschlossen':
       case 'Erledigt':
         return isDark 
@@ -62,25 +71,100 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ theme, onDelet
     }
   };
 
-  // Fixed Delete Handler
-  const handleDelete = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // Crucial: Stop row click event
-    console.log('Deleting:', id); // Debug log
+  // -- New Visualization Logic: Dual Pills for Project & derived Receipt Status --
+  const renderStatusBadges = (order: PurchaseOrder) => {
+    // 1. Check for linked receipt status (Derived Logic)
+    // We check if a Master exists for this PO and if its status is 'Offen' (meaning active/waiting)
+    const linkedReceipt = receiptMasters.find(r => r.poId === order.id);
+    const isInCheck = linkedReceipt && linkedReceipt.status === 'Offen';
 
-    if (!window.confirm("Möchten Sie diese Bestellung wirklich löschen?")) {
-        return;
+    // 2. Define Visual Components
+    let mainStatusBadge;
+    
+    if (order.isArchived) {
+        mainStatusBadge = (
+            <span className="px-2.5 py-1 rounded-full text-xs font-bold border border-slate-500 bg-slate-500/10 text-slate-500">
+                Archiviert
+            </span>
+        );
+    } else if (order.status === 'Projekt') {
+        mainStatusBadge = (
+            <>
+                {/* Pill 1: Offen (Implicit state of a project order) */}
+                <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${getStatusStyle('Offen')}`}>
+                    Offen
+                </span>
+                {/* Pill 2: Projekt Indicator */}
+                <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${getStatusStyle('Projekt')}`}>
+                    Projekt
+                </span>
+            </>
+        );
+    } else {
+        // Default Single Pill - Visual override for long text
+        const label = order.status === 'Teilweise geliefert' ? 'Teillieferung' : order.status;
+        
+        mainStatusBadge = (
+            <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${getStatusStyle(order.status)}`}>
+                {label}
+            </span>
+        );
     }
 
-    // Update Local State immediately
-    setOrders(prev => prev.filter(o => o.id !== id));
-    
-    // Notify parent (optional, but good practice)
-    onDelete(id);
+    // 3. Render Combined Badges
+    return (
+        <div className="flex flex-wrap items-center gap-2">
+            {mainStatusBadge}
+            
+            {/* Derived 'In Prüfung' Badge (Teams Purple) */}
+            {isInCheck && (
+                <span className={`px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${
+                    isDark 
+                        ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' 
+                        : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20'
+                }`}>
+                    In Prüfung
+                </span>
+            )}
+        </div>
+    );
+  };
+
+  const handleArchiveClick = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation(); 
+    if (window.confirm("Möchten Sie diese Bestellung wirklich archivieren?")) {
+        onArchive(id);
+        alert("Bestellung archiviert.");
+    }
   };
 
   const handleEditClick = (e: React.MouseEvent, order: PurchaseOrder) => {
     e.stopPropagation(); 
     onEdit(order);
+  };
+
+  const handleReceiveClick = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    onReceiveGoods(id);
+  };
+
+  const handleQuickReceiptClick = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    setSelectedOrderForReceipt(id);
+    setConfirmModalOpen(true);
+  };
+
+  const handleConfirmQuickReceipt = () => {
+    if (selectedOrderForReceipt) {
+        onQuickReceipt(selectedOrderForReceipt);
+    }
+    setConfirmModalOpen(false);
+    setSelectedOrderForReceipt(null);
+  };
+
+  const handleCancelQuickReceipt = () => {
+    setConfirmModalOpen(false);
+    setSelectedOrderForReceipt(null);
   };
 
   return (
@@ -112,8 +196,18 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ theme, onDelet
           </div>
           
           <button 
+             onClick={() => setShowArchived(!showArchived)}
+             className={`px-4 py-3 md:py-0 rounded-xl border flex items-center justify-center gap-2 font-bold transition-all ${
+               isDark ? 'bg-slate-900 border-slate-800 hover:bg-slate-800' : 'bg-white border-slate-200 hover:bg-slate-50'
+             } ${showArchived ? 'text-[#0077B5] border-[#0077B5]/30' : (isDark ? 'text-slate-400' : 'text-slate-500')}`}
+          >
+             {showArchived ? <CheckSquare size={18} /> : <Square size={18} />}
+             <span>Archivierte anzeigen</span>
+          </button>
+
+          <button 
             disabled
-            className={`px-4 py-3 md:py-0 rounded-xl border flex items-center justify-center gap-2 font-bold transition-all opacity-50 cursor-not-allowed ${
+            className={`hidden md:flex px-4 py-3 md:py-0 rounded-xl border items-center justify-center gap-2 font-bold transition-all opacity-50 cursor-not-allowed ${
               isDark ? 'bg-slate-900 border-slate-800 text-slate-400' : 'bg-white border-slate-200 text-slate-500'
             }`}
           >
@@ -133,6 +227,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ theme, onDelet
                  <th className="p-4 font-semibold">Datum</th>
                  <th className="p-4 font-semibold">Lieferant</th>
                  <th className="p-4 font-semibold">Status</th>
+                 <th className="p-4 font-semibold text-center">Bestellbestätigung</th>
                  <th className="p-4 font-semibold text-center">Positionen</th>
                  <th className="p-4 font-semibold text-right">Aktion</th>
                </tr>
@@ -142,7 +237,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ theme, onDelet
                   <tr 
                     key={order.id} 
                     onClick={() => setSelectedOrder(order)}
-                    className={`cursor-pointer transition-colors ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-50'}`}
+                    className={`cursor-pointer transition-colors ${
+                        order.isArchived 
+                            ? (isDark ? 'bg-slate-900/50 text-slate-500 hover:bg-slate-800/50' : 'bg-slate-50 text-slate-400 hover:bg-slate-100')
+                            : (isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-50')
+                    }`}
                   >
                     <td className="p-4 font-mono font-bold text-[#0077B5]">{order.id}</td>
                     <td className="p-4 flex items-center gap-2 text-slate-500">
@@ -154,9 +253,18 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ theme, onDelet
                         </div>
                     </td>
                     <td className="p-4">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${getStatusStyle(order.status)}`}>
-                        {order.status}
-                      </span>
+                      {renderStatusBadges(order)}
+                    </td>
+                    <td className="p-4 text-center">
+                        {order.pdfUrl ? (
+                           <div className="flex justify-center" title="Bestätigung vorhanden">
+                             <CheckCircle2 size={18} className="text-emerald-500" />
+                           </div>
+                        ) : (
+                           <div className="flex justify-center opacity-30" title="Keine Bestätigung">
+                             <Ban size={18} className="text-slate-500" />
+                           </div>
+                        )}
                     </td>
                     <td className="p-4 text-center">
                         <span className={`inline-flex items-center justify-center px-2 py-1 rounded-md text-xs font-bold ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'}`}>
@@ -164,20 +272,47 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ theme, onDelet
                         </span>
                     </td>
                     <td className="p-4 text-right flex items-center justify-end gap-2">
-                        <button 
-                            onClick={(e) => handleEditClick(e, order)}
-                            className="p-2 hover:bg-[#0077B5]/10 hover:text-[#0077B5] text-slate-400 rounded-full transition-colors"
-                            title="Bearbeiten"
-                        >
-                            <Pencil size={18} />
-                        </button>
-                        <button 
-                            onClick={(e) => handleDelete(order.id, e)}
-                            className="p-2 hover:bg-red-500/10 hover:text-red-500 text-slate-400 rounded-full transition-colors"
-                            title="Bestellung löschen"
-                        >
-                            <Trash2 size={18} />
-                        </button>
+                        {/* Quick Receipt Action - Only if NOT already in check (linkedReceiptId missing) */}
+                        {!order.isArchived && (order.status === 'Offen' || order.status === 'Projekt') && !order.linkedReceiptId && (
+                             <button
+                                onClick={(e) => handleQuickReceiptClick(e, order.id)}
+                                className="p-2 hover:bg-purple-500/10 hover:text-purple-500 text-slate-400 rounded-full transition-colors"
+                                title="Wareneingang erstellen (Wartet auf Prüfung)"
+                             >
+                                <PackagePlus size={18} />
+                             </button>
+                        )}
+
+                        {!order.isArchived && order.status !== 'Abgeschlossen' && (
+                            <button 
+                                onClick={(e) => handleReceiveClick(e, order.id)}
+                                className="p-2 hover:bg-emerald-500/10 hover:text-emerald-500 text-slate-400 rounded-full transition-colors"
+                                title="Wareneingang prüfen"
+                            >
+                                <ClipboardCheck size={18} />
+                            </button>
+                        )}
+                        {!order.isArchived && (
+                            <button 
+                                onClick={(e) => handleEditClick(e, order)}
+                                className="p-2 hover:bg-[#0077B5]/10 hover:text-[#0077B5] text-slate-400 rounded-full transition-colors"
+                                title="Bearbeiten"
+                            >
+                                <Pencil size={18} />
+                            </button>
+                        )}
+                        {!order.isArchived && (
+                            <button 
+                                onClick={(e) => handleArchiveClick(order.id, e)}
+                                className="p-2 hover:bg-amber-500/10 hover:text-amber-500 text-slate-400 rounded-full transition-colors"
+                                title="Archivieren"
+                            >
+                                <Archive size={18} />
+                            </button>
+                        )}
+                        {order.isArchived && (
+                            <span className="text-xs text-slate-500 italic mr-2">Archiviert</span>
+                        )}
                         <div className="w-px h-4 bg-slate-500/20 mx-1" />
                         <button 
                             className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 rounded-full transition-colors"
@@ -190,7 +325,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ theme, onDelet
                 ))}
                 {filteredOrders.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-12 text-center text-slate-500">Keine Bestellungen gefunden.</td>
+                    <td colSpan={7} className="p-12 text-center text-slate-500">Keine Bestellungen gefunden.</td>
                   </tr>
                 )}
              </tbody>
@@ -213,9 +348,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ theme, onDelet
                             {selectedOrder.id}
                         </h3>
                         <div className="flex items-center gap-3">
-                            <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getStatusStyle(selectedOrder.status)}`}>
-                                {selectedOrder.status}
-                            </span>
+                            {renderStatusBadges(selectedOrder)}
                             <button onClick={() => setSelectedOrder(null)} className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}>
                                 <X size={20} />
                             </button>
@@ -308,6 +441,40 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ theme, onDelet
                         className={`px-6 py-2.5 rounded-xl font-bold transition-colors ${isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`}
                     >
                         Schließen
+                    </button>
+                </div>
+            </div>
+        </div>,
+        document.body
+      )}
+
+      {/* NEW: Quick Receipt Confirmation Modal */}
+      {confirmModalOpen && createPortal(
+        <div className="fixed inset-0 z-[50] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={handleCancelQuickReceipt} />
+            <div className={`relative w-full max-w-sm rounded-2xl shadow-2xl p-6 flex flex-col gap-4 animate-in zoom-in-95 duration-200 ${isDark ? 'bg-slate-900 border border-slate-700' : 'bg-white'}`}>
+                <div className="flex items-center gap-4">
+                    <div className={`p-3 rounded-full shrink-0 ${isDark ? 'bg-purple-500/20 text-purple-400' : 'bg-purple-100 text-purple-600'}`}>
+                        <PackagePlus size={24} />
+                    </div>
+                    <div>
+                        <h3 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Wareneingang erstellen?</h3>
+                        <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Status wird auf 'Wartet auf Prüfung' gesetzt.</p>
+                    </div>
+                </div>
+                
+                <div className="flex justify-end gap-3 mt-2">
+                    <button 
+                        onClick={handleCancelQuickReceipt}
+                        className={`px-4 py-2 rounded-xl font-bold text-sm transition-colors ${isDark ? 'hover:bg-slate-800 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`}
+                    >
+                        Abbrechen
+                    </button>
+                    <button 
+                        onClick={handleConfirmQuickReceipt}
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-bold text-sm shadow-lg shadow-purple-500/20 transition-all"
+                    >
+                        Ja, erstellen
                     </button>
                 </div>
             </div>

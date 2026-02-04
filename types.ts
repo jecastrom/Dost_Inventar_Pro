@@ -15,6 +15,7 @@ export interface StockItem {
   lastUpdated?: number;
   lieferscheinNr?: string;
   status?: string;
+  packUnits?: number; // New field for packaging units
 }
 
 export interface ReceiptHeader {
@@ -53,7 +54,7 @@ export interface ReceiptComment {
 
 export type ViewMode = 'grid' | 'list';
 export type Theme = 'light' | 'dark';
-export type ActiveModule = 'dashboard' | 'create-order' | 'goods-receipt' | 'receipt-management' | 'order-management' | 'settings' | 'documentation';
+export type ActiveModule = 'dashboard' | 'inventory' | 'create-order' | 'goods-receipt' | 'receipt-management' | 'order-management' | 'settings' | 'documentation' | 'stock-logs';
 
 export const TRANSACTION_STATUS_OPTIONS = [
   'In Bearbeitung', 
@@ -73,7 +74,7 @@ export const TRANSACTION_STATUS_OPTIONS = [
 
 // --- Purchase Order Types (Process-Driven Workflow) ---
 
-export type PurchaseOrderStatus = 'Offen' | 'Teilweise geliefert' | 'Abgeschlossen' | 'Storniert';
+export type PurchaseOrderStatus = 'Offen' | 'Teilweise geliefert' | 'Abgeschlossen' | 'Storniert' | 'Projekt';
 
 export interface PurchaseOrderItem {
   sku: string;
@@ -90,6 +91,38 @@ export interface PurchaseOrder {
   expectedDeliveryDate?: string;
   items: PurchaseOrderItem[];
   pdfUrl?: string; // URL to the generated or uploaded PDF
+  isArchived: boolean; // POs are never deleted, just archived
+  linkedReceiptId?: string; // Reference to the Master Receipt
+}
+
+// --- New Procure-to-Pay Data Structures ---
+
+export interface DeliveryLogItem {
+  sku: string;
+  receivedQty: number;
+  damageFlag: boolean;
+  manualAddFlag: boolean;
+  // Snapshot Fields (History Correction)
+  orderedQty?: number;
+  previousReceived?: number;
+  offen?: number;
+  zuViel?: number;
+}
+
+export interface DeliveryLog {
+  id: string;
+  date: string;
+  lieferscheinNr: string;
+  items: DeliveryLogItem[];
+}
+
+export type ReceiptMasterStatus = 'Offen' | 'Abgeschlossen';
+
+export interface ReceiptMaster {
+  id: string;
+  poId: string;
+  status: ReceiptMasterStatus;
+  deliveries: DeliveryLog[];
 }
 
 // --- Case Management / Ticketing Types (Phase 4) ---
@@ -113,6 +146,22 @@ export interface Ticket {
   status: TicketStatus;
   priority: TicketPriority;
   messages: TicketMessage[];
+}
+
+// --- Stock Logging Types ---
+
+export interface StockLog {
+  id: string;
+  timestamp: Date;
+  userId: string;
+  userName: string;
+  itemId: string;
+  itemName: string;
+  action: 'add' | 'remove';
+  quantity: number;
+  warehouse: string;
+  source?: string;
+  context?: 'normal' | 'project' | 'manual' | 'po-normal' | 'po-project';
 }
 
 // --- Data Import Types (Legacy System Support) ---

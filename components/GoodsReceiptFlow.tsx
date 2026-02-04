@@ -1,12 +1,14 @@
+
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   X, Search, Plus, Calendar, Truck, Package, 
   Hash, Info, CheckCircle2, AlertCircle, ChevronDown, Check,
   ArrowRight, ArrowLeft, Trash2, MapPin, FileText, Building2,
-  AlertTriangle, Loader2, Home, ClipboardList, CheckSquare, MessageSquare, Briefcase
+  AlertTriangle, Loader2, Home, ClipboardList, CheckSquare, MessageSquare, Briefcase, Ban, ListFilter,
+  LogOut, PlusCircle
 } from 'lucide-react';
-import { StockItem, Theme, ReceiptHeader, TRANSACTION_STATUS_OPTIONS, PurchaseOrder } from '../types';
+import { StockItem, Theme, ReceiptHeader, PurchaseOrder, ReceiptMaster } from '../types';
 import { MOCK_PURCHASE_ORDERS } from '../data';
 
 // Hardcoded Location Options (Global Scope)
@@ -45,11 +47,141 @@ interface CartItem {
     item: StockItem;
     qty: number;
     orderedQty?: number;
+    previouslyReceived?: number; // Track history for cumulative logic
     location: string;
     isDamaged: boolean;
     issueNotes: string;
     showIssueInputs?: boolean; // UI state for toggling visibility
+    isManualAddition?: boolean; // Flag for items added manually during PO check
+    // Rejection Logic
+    isRejected: boolean;
+    rejectionReason: string;
+    // Over-Delivery Logic
+    overDeliveryResolution: 'return' | 'keep' | null;
+    // Return Logistics (New)
+    returnMethod?: string;
+    returnTrackingId?: string;
 }
+
+// --- NEW COMPONENT: PO SELECTION MODAL ---
+const POSelectionModal = ({ 
+  isOpen, 
+  onClose, 
+  orders, 
+  onSelect, 
+  receiptMasters, 
+  theme 
+}: { 
+  isOpen: boolean, 
+  onClose: () => void, 
+  orders: PurchaseOrder[], 
+  onSelect: (po: PurchaseOrder) => void,
+  receiptMasters: ReceiptMaster[],
+  theme: Theme
+}) => {
+  if (!isOpen) return null;
+  const isDark = theme === 'dark';
+  const [term, setTerm] = useState('');
+
+  const filtered = orders.filter(o => 
+    o.id.toLowerCase().includes(term.toLowerCase()) || 
+    o.supplier.toLowerCase().includes(term.toLowerCase())
+  );
+
+  const getStatusStyle = (status: string) => {
+    switch (status) {
+      case 'Offen': return isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200';
+      case 'Teilweise geliefert': return isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-100 text-amber-700 border-amber-200';
+      case 'Projekt': return isDark ? 'bg-blue-900/30 text-blue-400 border-blue-900' : 'bg-blue-100 text-blue-700 border-blue-200';
+      default: return isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500';
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4">
+       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose} />
+       <div className={`relative w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200 ${isDark ? 'bg-slate-900 border border-slate-700' : 'bg-white'}`}>
+          
+          {/* Header */}
+          <div className={`p-5 border-b flex items-center gap-4 ${isDark ? 'border-slate-800' : 'border-slate-100'}`}>
+             <Search className="text-slate-400" size={24} />
+             <input 
+                autoFocus
+                className={`flex-1 bg-transparent outline-none text-lg font-medium placeholder:opacity-50 ${isDark ? 'text-white' : 'text-slate-900'}`}
+                placeholder="Bestellung suchen (Nr. oder Lieferant)..."
+                value={term}
+                onChange={e => setTerm(e.target.value)}
+             />
+             <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+                <X size={24} className="text-slate-400"/>
+             </button>
+          </div>
+
+          {/* List */}
+          <div className="overflow-y-auto p-4 space-y-3 bg-slate-50 dark:bg-slate-950/50 flex-1">
+             {filtered.length === 0 && (
+                <div className="text-center py-10 text-slate-500">Keine Bestellungen gefunden.</div>
+             )}
+             {filtered.map(po => {
+                // Status Logic
+                const linkedReceipt = receiptMasters.find(r => r.poId === po.id);
+                const isInCheck = linkedReceipt && linkedReceipt.status === 'Offen';
+                const label = po.status === 'Teilweise geliefert' ? 'Teillieferung' : po.status;
+
+                return (
+                   <button
+                      key={po.id}
+                      onClick={() => onSelect(po)}
+                      className={`w-full text-left p-4 rounded-xl border transition-all group relative overflow-hidden ${
+                          isDark 
+                            ? 'bg-slate-800 border-slate-700 hover:border-blue-500 hover:bg-slate-800/80' 
+                            : 'bg-white border-slate-200 hover:border-[#0077B5] hover:shadow-md'
+                      }`}
+                   >
+                      <div className="flex justify-between items-start mb-2">
+                          <div className="flex items-center gap-3">
+                              <span className={`font-mono font-bold text-lg ${isDark ? 'text-white' : 'text-slate-900'}`}>{po.id}</span>
+                              {/* BADGES ROW */}
+                              <div className="flex gap-2">
+                                  {po.status === 'Projekt' ? (
+                                      <>
+                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${getStatusStyle('Offen')}`}>Offen</span>
+                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${getStatusStyle('Projekt')}`}>Projekt</span>
+                                      </>
+                                  ) : (
+                                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${getStatusStyle(po.status)}`}>{label}</span>
+                                  )}
+                                  
+                                  {isInCheck && (
+                                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${isDark ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20'}`}>
+                                          In Prüfung
+                                      </span>
+                                  )}
+                              </div>
+                          </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-4 text-sm opacity-70">
+                          <div className="flex items-center gap-1.5 font-medium">
+                              <Truck size={14} /> {po.supplier}
+                          </div>
+                          <div className="w-1 h-1 rounded-full bg-current opacity-50" />
+                          <div className="flex items-center gap-1.5">
+                              <Calendar size={14} /> {new Date(po.dateCreated).toLocaleDateString()}
+                          </div>
+                          <div className="ml-auto font-mono text-xs opacity-50">
+                              {po.items.length} Pos.
+                          </div>
+                      </div>
+                   </button>
+                );
+             })}
+          </div>
+       </div>
+    </div>,
+    document.body
+  );
+};
 
 interface GoodsReceiptFlowProps {
   theme: Theme;
@@ -66,7 +198,10 @@ interface GoodsReceiptFlowProps {
     }[],
     newItemsCreated: StockItem[]
   ) => void;
+  onLogStock?: (itemId: string, itemName: string, action: 'add' | 'remove', quantity: number, source?: string, context?: 'normal' | 'project' | 'manual' | 'po-normal' | 'po-project') => void;
   purchaseOrders?: PurchaseOrder[];
+  initialPoId?: string | null;
+  receiptMasters?: ReceiptMaster[];
 }
 
 export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({ 
@@ -74,7 +209,10 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
   existingItems, 
   onClose, 
   onSuccess,
-  purchaseOrders
+  onLogStock,
+  purchaseOrders,
+  initialPoId,
+  receiptMasters = []
 }) => {
   const isDark = theme === 'dark';
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -94,11 +232,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
 
   // -- State: PO Selection --
   const [linkedPoId, setLinkedPoId] = useState<string | null>(null);
-  const [showPODropdown, setShowPODropdown] = useState(false);
-  const [poSearchTerm, setPoSearchTerm] = useState('');
-  const poInputRef = useRef<HTMLDivElement>(null);
-  const poDropdownRef = useRef<HTMLDivElement>(null);
-  const [poDropdownCoords, setPODropdownCoords] = useState({ top: 0, left: 0, width: 0 });
+  const [showPoModal, setShowPoModal] = useState(false);
 
   // -- State: Supplier Selection (Portal) --
   const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
@@ -145,31 +279,81 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
   useEffect(() => {
     if (step === 3) {
         let suggested = 'Gebucht';
-        const hasIssues = cart.some(c => c.isDamaged || (c.issueNotes && c.issueNotes.trim().length > 0));
-        
-        if (hasIssues) {
-            suggested = 'Falsch geliefert';
-        } else if (linkedPoId) {
-            let totalOrdered = 0;
-            let totalReceived = 0;
-            cart.forEach(c => {
-                totalOrdered += (c.orderedQty || 0);
-                totalReceived += c.qty;
-            });
-            if (totalReceived < totalOrdered) suggested = 'Teillieferung';
-            else if (totalReceived > totalOrdered) suggested = 'Übermenge';
+
+        // 1. REJECTION CHECK (Priority)
+        const allRejected = cart.length > 0 && cart.every(c => c.isRejected);
+        const anyRejected = cart.some(c => c.isRejected);
+
+        if (allRejected) {
+             suggested = 'Abgelehnt';
+        } else if (anyRejected) {
+             suggested = 'Teillieferung';
+        } else {
+             // 2. Normal Logic (if not fully rejected)
+             const hasIssues = cart.some(c => c.isDamaged || (c.issueNotes && c.issueNotes.trim().length > 0));
+             
+             if (hasIssues) {
+                suggested = 'Falsch geliefert'; // Or 'Reklamation'
+             } else if (linkedPoId) {
+                // MULTI-DELIVERY LOGIC
+                const linkedMaster = receiptMasters.find(m => m.poId === linkedPoId);
+                const currentPo = purchaseOrders?.find(p => p.id === linkedPoId);
+                
+                if (currentPo) {
+                    let allItemsComplete = true;
+                    let anyOverDelivery = false;
+                    
+                    // Iterate over all expected PO items
+                    for (const poItem of currentPo.items) {
+                        // 1. Get History Received for this Item
+                        let historyQty = 0;
+                        if (linkedMaster) {
+                            linkedMaster.deliveries.forEach(del => {
+                                const dItem = del.items.find(di => di.sku === poItem.sku);
+                                if (dItem) historyQty += dItem.receivedQty;
+                            });
+                        }
+
+                        // 2. Get Current Cart Qty for this Item
+                        // CRITICAL: If rejected, count as 0 received for STATUS CALCULATION
+                        const cartItem = cart.find(c => c.item.sku === poItem.sku);
+                        // Use Over-Delivery Resolution to determine effective qty
+                        let currentQty = 0;
+                        if (cartItem && !cartItem.isRejected) {
+                            if (cartItem.qty > (cartItem.orderedQty || 0) && cartItem.overDeliveryResolution === 'return') {
+                                currentQty = cartItem.orderedQty || 0;
+                            } else {
+                                currentQty = cartItem.qty;
+                            }
+                        }
+
+                        // 3. Total
+                        const totalReceived = historyQty + currentQty;
+
+                        if (totalReceived < poItem.quantityExpected) {
+                            allItemsComplete = false;
+                        }
+                        if (totalReceived > poItem.quantityExpected) {
+                            anyOverDelivery = true;
+                        }
+                    }
+
+                    if (anyOverDelivery) suggested = 'Übermenge';
+                    else if (!allItemsComplete) suggested = 'Teillieferung';
+                    else suggested = 'Gebucht'; // All items complete & no issues
+                }
+             }
         }
         
         setHeaderData(prev => ({ ...prev, status: suggested }));
     }
-  }, [step, cart, linkedPoId]);
+  }, [step, cart, linkedPoId, receiptMasters, purchaseOrders]);
 
   // -- Event Listeners for Portal Dropdowns --
   useEffect(() => {
-    if (!showSystemDropdown && !showSearchDropdown && !showSupplierDropdown && !showLocationDropdown && !showPODropdown) return;
+    if (!showSystemDropdown && !showSearchDropdown && !showSupplierDropdown && !showLocationDropdown) return;
     
     const handleScroll = (e: Event) => {
-        if (showPODropdown && poDropdownRef.current && !poDropdownRef.current.contains(e.target as Node)) setShowPODropdown(false);
         if (showSystemDropdown && systemDropdownRef.current && !systemDropdownRef.current.contains(e.target as Node)) setShowSystemDropdown(false);
         if (showSearchDropdown && searchDropdownRef.current && !searchDropdownRef.current.contains(e.target as Node)) setShowSearchDropdown(false);
         if (showSupplierDropdown && supplierDropdownRef.current && !supplierDropdownRef.current.contains(e.target as Node)) setShowSupplierDropdown(false);
@@ -180,7 +364,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
         setShowSystemDropdown(false); 
         setShowSupplierDropdown(false);
         setShowLocationDropdown(false);
-        setShowPODropdown(false);
         if (showSearchDropdown && searchInputRef.current) {
              const rect = searchInputRef.current.getBoundingClientRect();
              setSearchDropdownCoords({
@@ -198,12 +381,11 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
       window.removeEventListener('scroll', handleScroll, true);
       window.removeEventListener('resize', handleResize);
     };
-  }, [showSystemDropdown, showSearchDropdown, showSupplierDropdown, showLocationDropdown, showPODropdown]);
+  }, [showSystemDropdown, showSearchDropdown, showSupplierDropdown, showLocationDropdown]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (showPODropdown && !poInputRef.current?.contains(target) && !poDropdownRef.current?.contains(target)) setShowPODropdown(false);
       if (showSystemDropdown && !systemInputRef.current?.contains(target) && !systemDropdownRef.current?.contains(target)) setShowSystemDropdown(false);
       if (showSearchDropdown && !searchInputRef.current?.contains(target) && !searchDropdownRef.current?.contains(target)) setShowSearchDropdown(false);
       if (showSupplierDropdown && !supplierInputRef.current?.contains(target) && !supplierDropdownRef.current?.contains(target)) setShowSupplierDropdown(false);
@@ -214,25 +396,13 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [showSystemDropdown, showSearchDropdown, showSupplierDropdown, showLocationDropdown, showPODropdown]);
+  }, [showSystemDropdown, showSearchDropdown, showSupplierDropdown, showLocationDropdown]);
 
   // -- Computed Data Helpers --
-  
-  // FIX: Filter Logic for POs
-  // 1. Source from prop OR mock
-  // 2. Filter out ONLY 'Abgeschlossen' and 'Storniert'. Keep 'Teilweise geliefert'.
   const availablePOs = useMemo(() => {
       const source = purchaseOrders || MOCK_PURCHASE_ORDERS;
       return source.filter(po => po.status !== 'Abgeschlossen' && po.status !== 'Storniert');
   }, [purchaseOrders]);
-
-  const filteredPOs = useMemo(() => {
-    if (!poSearchTerm) return availablePOs;
-    return availablePOs.filter(po => 
-      po.id.toLowerCase().includes(poSearchTerm.toLowerCase()) || 
-      po.supplier.toLowerCase().includes(poSearchTerm.toLowerCase())
-    );
-  }, [poSearchTerm, availablePOs]);
 
   const suppliers = useMemo(() => {
     const unique = new Set<string>();
@@ -269,28 +439,51 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     ).slice(0, 50); 
   }, [searchTerm, existingItems]);
 
-  // NEW: Real-Time Delivery Status Logic
-  const deliveryStatusFeedback = useMemo(() => {
-    if (!linkedPoId || cart.length === 0) return null;
-    
-    const hasShortage = cart.some(c => c.qty < (c.orderedQty || 0));
-    if (hasShortage) return 'partial';
+  // UPDATED: Real-Time Anomaly Detection Logic
+  const anomalies = useMemo(() => {
+    if (!linkedPoId || cart.length === 0) return { hasMissing: false, hasExtra: false, hasDamage: false, isPerfect: false };
 
-    const isPerfect = cart.every(c => c.qty === (c.orderedQty || 0));
-    if (isPerfect) return 'perfect';
+    let hasMissing = false;
+    let hasExtra = false;
+    let hasDamage = false;
 
-    return null; // Over-delivery or other states not explicitly requested to be bannerized
+    cart.forEach(c => {
+        if (c.isRejected) return; // Skip logic for rejected items as they are outliers
+        const ordered = c.orderedQty || 0;
+        const total = (c.previouslyReceived || 0) + c.qty;
+        
+        if (total < ordered) hasMissing = true;
+        if (total > ordered) hasExtra = true;
+        if (c.isDamaged || (c.issueNotes && c.issueNotes.length > 0)) hasDamage = true;
+    });
+
+    const isPerfect = !hasMissing && !hasExtra && !hasDamage && !cart.some(c => c.isRejected);
+
+    return { hasMissing, hasExtra, hasDamage, isPerfect };
   }, [cart, linkedPoId]);
+
+  // -- Dynamic Column Logic --
+  const showHistoryColumn = useMemo(() => {
+      return linkedPoId && cart.some(c => (c.previouslyReceived || 0) > 0);
+  }, [linkedPoId, cart]);
 
   // -- Cart Handlers --
   const addToCart = (item: StockItem) => {
     setCart(prev => [...prev, { 
       item, 
       qty: 1, 
+      orderedQty: linkedPoId ? 0 : undefined,
+      previouslyReceived: 0, // Manual items have no history in this context
       location: headerData.warehouseLocation, 
       isDamaged: false, 
       issueNotes: '',
-      showIssueInputs: false 
+      showIssueInputs: false,
+      isManualAddition: !!linkedPoId,
+      isRejected: false,
+      rejectionReason: '',
+      overDeliveryResolution: null,
+      returnMethod: '',
+      returnTrackingId: ''
     }]);
     setSearchTerm('');
     setShowSearchDropdown(false);
@@ -334,11 +527,26 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
   const handleSelectPO = (po: PurchaseOrder) => {
     setLinkedPoId(po.id);
     setHeaderData(prev => ({ ...prev, bestellNr: po.id, lieferant: po.supplier }));
-    setPoSearchTerm(`${po.id} - ${po.supplier}`);
-    setShowPODropdown(false);
+    setShowPoModal(false);
 
+    // Calculate History from Receipt Masters
+    const linkedMaster = receiptMasters.find(m => m.poId === po.id);
+    const historyMap = new Map<string, number>();
+    
+    if (linkedMaster) {
+        linkedMaster.deliveries.forEach(del => {
+            del.items.forEach(item => {
+                const current = historyMap.get(item.sku) || 0;
+                historyMap.set(item.sku, current + item.receivedQty);
+            });
+        });
+    }
+
+    // Populate Cart Items including History
     const newCartItems: CartItem[] = po.items.map(poItem => {
         const inventoryItem = existingItems.find(ex => ex.sku === poItem.sku);
+        const historyQty = historyMap.get(poItem.sku) || 0;
+
         const item: StockItem = inventoryItem ? { ...inventoryItem } : {
             id: crypto.randomUUID(),
             name: poItem.name,
@@ -353,40 +561,53 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
         };
         return {
             item,
-            qty: poItem.quantityExpected,
-            orderedQty: poItem.quantityExpected,
+            // Pre-calculate remaining based on History vs Ordered
+            qty: Math.max(0, poItem.quantityExpected - historyQty), 
+            orderedQty: poItem.quantityExpected, // Total Expected
+            previouslyReceived: historyQty, // Calculated History
             location: headerData.warehouseLocation,
             isDamaged: false,
             issueNotes: '',
-            showIssueInputs: false
+            showIssueInputs: false,
+            isManualAddition: false,
+            isRejected: false,
+            rejectionReason: '',
+            overDeliveryResolution: null,
+            returnMethod: '',
+            returnTrackingId: ''
         };
     });
     setCart(newCartItems);
   };
 
+  // -- Auto-Select PO on Mount if provided via prop --
+  useEffect(() => {
+    if (initialPoId && purchaseOrders) {
+        const found = availablePOs.find(p => p.id === initialPoId);
+        if (found) {
+            handleSelectPO(found);
+        }
+    }
+  }, []);
+
+  // -- SUBMISSION HANDLERS --
+  
+  // 1. Triggered by "Wareneingang buchen" Button
   const handleSubmit = async () => {
     if (!headerData.lieferscheinNr || !headerData.lieferant || cart.length === 0) return;
 
     setSubmissionStatus('submitting');
     
-    // -- STATUS FINALIZATION --
-    // We use the status that is currently in state (auto-calculated or manually chosen)
-    const finalStatus = headerData.status;
-    setFinalResultStatus(finalStatus);
+    // Status is already auto-calculated in the useEffect for Step 3
+    // We store it for the success message.
+    setFinalResultStatus(headerData.status);
 
     try {
+        // Simulate network delay
         await new Promise(resolve => setTimeout(resolve, 600));
-
-        const newItemsCreated = cart
-          .map(c => c.item)
-          .filter(item => !existingItems.find(ex => ex.id === item.id));
-
-        const finalHeader = { ...headerData, status: finalStatus };
-
-        // Clean up UI-only properties before sending to success callback
-        const cleanCartItems = cart.map(({ showIssueInputs, ...rest }) => rest);
-
-        onSuccess(finalHeader, cleanCartItems, newItemsCreated);
+        
+        // DO NOT call props (onSuccess, onLogStock) here.
+        // Wait for user confirmation in the overlay.
         setSubmissionStatus('success');
     } catch (err) {
         console.error("Error saving receipt:", err);
@@ -394,8 +615,95 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     }
   };
 
-  // Helper for Success Message Logic
+  // 2. Triggered by "OK" Button in Success Overlay
+  const handleFinalize = () => {
+    // --- DATA PREP (with Cumulative Over-Delivery Logic) ---
+    // Prepare items for Parent (App.tsx)
+    const cleanCartItems = cart.map(({ showIssueInputs, isRejected, rejectionReason, overDeliveryResolution, ...rest }) => {
+        let finalQty = rest.qty; // Default: Add what user entered
+        let finalNotes = rest.issueNotes || '';
+
+        // Over-Delivery Handling (Cumulative)
+        const ordered = rest.orderedQty || 0;
+        const previous = rest.previouslyReceived || 0;
+        const totalAfterReceipt = previous + rest.qty;
+        
+        if (!isRejected && linkedPoId && totalAfterReceipt > ordered) {
+            const over = totalAfterReceipt - ordered;
+            
+            if (overDeliveryResolution === 'return') {
+                // If returning surplus, we only book enough to fill the order (or 0 if already full/over)
+                // Cap the addition so that Previous + Added = Ordered
+                // Added = Ordered - Previous
+                finalQty = Math.max(0, ordered - previous); 
+                
+                const methodInfo = rest.returnMethod ? ` via ${rest.returnMethod}` : '';
+                const trackingInfo = rest.returnTrackingId ? ` (ID: ${rest.returnTrackingId})` : '';
+                finalNotes += (finalNotes ? ' | ' : '') + `[AUTO] ${over}x Übermenge abgewiesen${methodInfo}${trackingInfo}`;
+            } else {
+                // If accepted, keep full qty input by user
+                finalNotes += (finalNotes ? ' | ' : '') + `[AUTO] ${over}x Übermenge akzeptiert`;
+            }
+        }
+
+        // Rejection Handling
+        if (isRejected) {
+            finalQty = 0; // Effectively 0 for stock update
+            finalNotes = `ABGELEHNT: ${rejectionReason || 'Ohne Grund'}. ${finalNotes}`;
+        }
+
+        return {
+            ...rest,
+            qty: finalQty,
+            issueNotes: finalNotes
+        };
+    });
+
+    // --- LOGGING LOGIC ---
+    if (onLogStock) {
+        const selectedPO = purchaseOrders?.find(p => p.id === linkedPoId);
+        const source = "PO-" + (selectedPO?.id || "MANUAL");
+        
+        // Context Logic
+        let context: 'po-project' | 'po-normal' | 'normal' | 'project' = 'po-normal';
+        if (selectedPO) {
+            if (selectedPO.status === 'Projekt') {
+                context = 'po-project';
+            }
+        } else {
+             // Fallback
+             context = 'po-normal'; 
+        }
+
+        cleanCartItems.forEach(c => {
+            if (c.qty > 0) { // Only log positive additions
+                onLogStock(
+                    c.item.sku, // Use SKU as the ID for logging clarity
+                    c.item.name, 
+                    'add', 
+                    c.qty, 
+                    source, 
+                    context
+                );
+            }
+        });
+    }
+
+    // --- NEW ITEMS ---
+    const newItemsCreated = cart
+      .filter(c => !c.isRejected) 
+      .map(c => c.item)
+      .filter(item => !existingItems.find(ex => ex.id === item.id));
+
+    // Ensure we pass the calculated status
+    const finalHeader = { ...headerData, status: finalResultStatus };
+    
+    // --- CALL PARENT (NAVIGATE) ---
+    onSuccess(finalHeader, cleanCartItems, newItemsCreated);
+  };
+
   const getSuccessMessage = () => {
+    if (finalResultStatus === 'Abgelehnt') return "Wareneingang wurde als 'Abgelehnt' markiert.";
     if (finalResultStatus === 'Falsch geliefert') return "Status auf 'Falsch geliefert' gesetzt aufgrund von gemeldeten Problemen.";
     if (finalResultStatus === 'Teillieferung') return "Teillieferung erfolgreich erfasst. Bestellung bleibt teilweise offen.";
     if (finalResultStatus === 'Übermenge') return "Achtung: Mehr geliefert als bestellt (Übermenge).";
@@ -405,15 +713,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
   };
 
   // Dropdown Position Updaters
-  // ... (Dropdown logic remains the same)
-  const updatePODropdownPosition = () => {
-    if (poInputRef.current) {
-      const rect = poInputRef.current.getBoundingClientRect();
-      setPODropdownCoords({ top: rect.bottom + window.scrollY, left: rect.left + window.scrollX, width: rect.width });
-      setShowPODropdown(true);
-    }
-  };
-
   const updateSystemDropdownPosition = () => {
     if (systemInputRef.current) {
       const rect = systemInputRef.current.getBoundingClientRect();
@@ -451,7 +750,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     if (val) updateSearchDropdownPosition(); else setShowSearchDropdown(false);
   };
 
-  // -- Navigation Handlers --
   const canGoNext = () => {
     if (step === 1) return headerData.lieferscheinNr && headerData.lieferant && headerData.warehouseLocation;
     if (step === 2) return cart.length > 0;
@@ -478,7 +776,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
            {submissionStatus === 'success' && (
              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 max-w-md w-full shadow-2xl flex flex-col items-center text-center animate-in zoom-in-95 slide-in-from-bottom-4 duration-500">
                 <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 ${
-                  ['Teillieferung', 'Falsch geliefert'].includes(finalResultStatus) 
+                  ['Teillieferung', 'Falsch geliefert', 'Abgelehnt'].includes(finalResultStatus) 
                     ? 'bg-red-100 dark:bg-red-500/20' 
                     : ['Übermenge', 'Projekt'].includes(finalResultStatus) 
                       ? 'bg-amber-100 dark:bg-amber-500/20'
@@ -486,6 +784,8 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                 }`}>
                    {['Teillieferung', 'Falsch geliefert'].includes(finalResultStatus) ? (
                       <AlertCircle size={48} className="text-red-600 dark:text-red-400" strokeWidth={3} />
+                   ) : finalResultStatus === 'Abgelehnt' ? (
+                      <Ban size={48} className="text-red-600 dark:text-red-400" strokeWidth={3} />
                    ) : ['Übermenge'].includes(finalResultStatus) ? (
                       <AlertTriangle size={48} className="text-amber-600 dark:text-amber-400" strokeWidth={3} />
                    ) : finalResultStatus === 'Projekt' ? (
@@ -495,22 +795,16 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                    )}
                 </div>
                 <h2 className="text-2xl font-bold mb-2 dark:text-white text-slate-900">
-                    {finalResultStatus === 'Falsch geliefert' ? 'Reklamation erforderlich' : finalResultStatus === 'Projekt' ? 'Projektbuchung' : 'Abgeschlossen'}
+                    Wareneingang erfolgreich gespeichert
                 </h2>
                 <p className="text-slate-500 dark:text-slate-400 mb-8 leading-relaxed">
                    {getSuccessMessage()}
                 </p>
                 <button 
-                  onClick={onClose}
-                  className={`w-full py-4 text-white rounded-xl font-bold text-lg shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 ${
-                    ['Teillieferung', 'Falsch geliefert'].includes(finalResultStatus)
-                      ? 'bg-red-600 hover:bg-red-500 shadow-red-500/30'
-                      : ['Übermenge', 'Projekt'].includes(finalResultStatus) 
-                        ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-500/30' 
-                        : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-500/30'
-                  }`}
+                  onClick={handleFinalize}
+                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-lg shadow-lg shadow-emerald-500/30 transition-all active:scale-95 flex items-center justify-center gap-2"
                 >
-                  <Home size={20} /> Zurück zur Wareneingang-Verwaltung
+                  <Home size={20} /> OK
                 </button>
              </div>
            )}
@@ -557,6 +851,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
       </div>
 
       {/* Main Content Area */}
+      
       <div className="flex-1 overflow-y-auto p-5 relative">
         
         {/* STEP 1: KOPFDATEN */}
@@ -566,75 +861,44 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                 <h3 className="text-lg font-bold mb-1">Schritt 1: Lieferung wählen & prüfen</h3>
                 <p className="text-sm opacity-70">Bitte geben Sie die Informationen zum Lieferschein ein.</p>
             </div>
-
             <div className="grid grid-cols-1 gap-5">
-                
-                {/* PO Selection (Auto-Fill) */}
-                <div className="space-y-1 relative group">
-                  <label className="text-xs font-bold text-[#0077B5] uppercase tracking-wide">Bestellung auswählen (Optional)</label>
-                  <div className="relative" ref={poInputRef}>
-                    <ClipboardList className="absolute left-3 top-1/2 -translate-y-1/2 text-[#0077B5]" size={16} />
-                    <input 
-                      value={poSearchTerm}
-                      onChange={e => {
-                        setPoSearchTerm(e.target.value);
-                        updatePODropdownPosition();
-                      }}
-                      onFocus={updatePODropdownPosition}
-                      onClick={updatePODropdownPosition}
-                      className={`${inputClass} pl-10 pr-8 ring-blue-500/10 border-blue-500/30`}
-                      placeholder="Offene Bestellung suchen..."
-                    />
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 opacity-30 pointer-events-none" size={16} />
-                    
-                    {/* PO Dropdown */}
-                    {showPODropdown && filteredPOs.length > 0 && createPortal(
-                      <div 
-                        ref={poDropdownRef}
-                        style={{
-                          position: 'absolute',
-                          top: poDropdownCoords.top + 4,
-                          left: poDropdownCoords.left,
-                          width: poDropdownCoords.width,
-                          zIndex: 99999,
-                          maxHeight: '300px'
-                        }}
-                        className={`rounded-xl border shadow-xl overflow-y-auto animate-in fade-in zoom-in-95 duration-100 ${
-                          isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'
-                        }`}
-                      >
-                        {filteredPOs.map(po => (
-                          <button
-                            key={po.id}
-                            onClick={() => handleSelectPO(po)}
-                            className={`w-full text-left px-4 py-3 text-sm transition-all flex items-center justify-between group/item ${
-                              isDark 
-                                ? 'hover:bg-slate-800 text-slate-200 border-b border-slate-800 last:border-0' 
-                                : 'hover:bg-slate-50 text-slate-700 border-b border-slate-50 last:border-0'
-                            }`}
-                          >
-                            <div>
-                                <div className="font-bold flex items-center gap-2">
-                                    {po.id} 
-                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${
-                                        po.status === 'Offen' 
-                                            ? isDark ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                                            : isDark ? 'bg-blue-500/20 text-blue-400 border-blue-500/20' : 'bg-blue-100 text-blue-700 border-blue-200'
-                                    }`}>{po.status}</span>
-                                </div>
-                                <div className="text-xs opacity-70 mt-0.5">{po.supplier}</div>
-                            </div>
-                            {headerData.bestellNr === po.id && (
-                              <div className="bg-[#0077B5]/10 p-1 rounded-full">
-                                <Check size={12} className="text-[#0077B5]" strokeWidth={3} />
+                {/* PO Selection (Replaced with Modal Trigger) */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-[#0077B5] uppercase tracking-wide">Bestellung auswählen</label>
+                  
+                  {linkedPoId ? (
+                      // State B: PO Selected Summary Card
+                      <div className={`p-4 rounded-xl border flex items-center justify-between group transition-colors ${isDark ? 'bg-slate-800 border-slate-700 hover:border-[#0077B5]' : 'bg-white border-slate-200 hover:border-[#0077B5]'}`}>
+                          <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                  <span className={`font-mono font-bold text-lg ${isDark ? 'text-white' : 'text-slate-900'}`}>{linkedPoId}</span>
+                                  <CheckCircle2 size={16} className="text-[#0077B5]" />
                               </div>
-                            )}
+                              <div className="text-sm opacity-70 flex items-center gap-2">
+                                  <span>{headerData.lieferant}</span>
+                              </div>
+                          </div>
+                          <button 
+                              onClick={() => setShowPoModal(true)}
+                              className={`px-4 py-2 rounded-lg font-bold text-sm transition-colors ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                          >
+                              Ändern
                           </button>
-                        ))}
-                      </div>,
-                      document.body
-                    )}
-                  </div>
+                      </div>
+                  ) : (
+                      // State A: Empty Selection Button
+                      <button 
+                          onClick={() => setShowPoModal(true)}
+                          className={`w-full p-4 rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-2 transition-all hover:border-[#0077B5] group ${isDark ? 'border-slate-700 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'}`}
+                      >
+                          <div className={`p-3 rounded-full transition-transform group-hover:scale-110 ${isDark ? 'bg-slate-800 text-[#0077B5]' : 'bg-slate-100 text-[#0077B5]'}`}>
+                              <ClipboardList size={24} />
+                          </div>
+                          <span className={`font-bold ${isDark ? 'text-slate-300 group-hover:text-white' : 'text-slate-600 group-hover:text-slate-900'}`}>
+                              Bestellung aus Liste wählen
+                          </span>
+                      </button>
+                  )}
                 </div>
 
                 <div className="w-full h-px bg-slate-200 dark:bg-slate-800 my-1" />
@@ -667,7 +931,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                   </div>
                 </div>
                 
-                {/* Supplier (Lieferant) with Dynamic Combobox */}
                 <div className="space-y-1 relative group">
                   <label className="text-xs font-medium opacity-70">Lieferant <span className="text-red-500">*</span></label>
                   <div className="relative" ref={supplierInputRef}>
@@ -686,8 +949,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                       disabled={!!linkedPoId}
                     />
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 opacity-30 pointer-events-none" size={16} />
-                    
-                    {/* Supplier Dropdown */}
                     {showSupplierDropdown && !linkedPoId && filteredSuppliers.length > 0 && createPortal(
                       <div 
                         ref={supplierDropdownRef}
@@ -745,7 +1006,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                     </div>
                 </div>
 
-                {/* Global Lagerort (Location) */}
                 <div className="space-y-1 relative group">
                   <label className="text-xs font-medium opacity-70">Ziel-Lagerort (Global für alle Positionen) <span className="text-red-500">*</span></label>
                   <div className="relative" ref={locationInputRef}>
@@ -764,8 +1024,6 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                       placeholder="Lagerort auswählen..."
                     />
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 opacity-30 pointer-events-none" size={16} />
-                    
-                    {/* Location Dropdown */}
                     {showLocationDropdown && filteredLocations.length > 0 && createPortal(
                       <div 
                         ref={locationDropdownRef}
@@ -815,7 +1073,8 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
 
         {/* STEP 2: ARTIKEL HINZUFÜGEN / PRÜFEN */}
         {step === 2 && (
-          <div className="max-w-5xl mx-auto space-y-6 animate-in fade-in slide-in-from-right-4">
+          <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in slide-in-from-right-4">
+             {/* ... Step 2 Content ... */}
              <div className="flex justify-between items-end mb-2">
                 <div>
                     <h3 className="text-lg font-bold mb-1">
@@ -834,12 +1093,13 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                    <Plus size={16} /> {isCreatingNew ? 'Zurück zur Suche' : 'Neuen Artikel anlegen'}
                  </button>
              </div>
-
+             
+             {/* ... Search / Create Logic (Unchanged) ... */}
              <div className="space-y-6 relative z-[50]">
-                {/* ... (Existing Search/Create logic) ... */}
+                {/* Search / Create Item Block */}
                 {isCreatingNew ? (
                     <div className={`p-5 rounded-2xl border space-y-4 animate-in slide-in-from-top-2 ${isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
-                       {/* ... Create New Item Inputs ... */}
+                       {/* New Item Form */}
                        <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 flex gap-2 items-start text-sm text-blue-600 dark:text-blue-400">
                           <Info size={18} className="shrink-0 mt-0.5" />
                           <span><b>Hinweis:</b> Der neue Artikel wird automatisch mit dem System und Lagerort ({headerData.warehouseLocation}) angelegt.</span>
@@ -979,31 +1239,50 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                 )}
              </div>
 
-             {/* Real-Time Feedback Banner */}
-             {step === 2 && deliveryStatusFeedback === 'partial' && (
-                <div className={`mb-6 p-4 rounded-xl border flex items-center gap-4 animate-in fade-in slide-in-from-top-2 ${
-                    isDark ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-700'
-                }`}>
-                    <div className={`p-2 rounded-full shrink-0 ${isDark ? 'bg-red-500/20' : 'bg-red-100'}`}>
-                        <AlertTriangle size={24} className={isDark ? 'text-red-400' : 'text-red-600'} />
-                    </div>
-                    <div>
-                        <h4 className="font-bold text-sm">Teillieferung erkannt</h4>
-                        <p className="text-xs opacity-90 mt-0.5">Dieser Wareneingang wird als Teillieferung markiert – fehlende Mengen werden gespeichert.</p>
-                    </div>
+             {/* Real-Time Feedback Banners (Anomalies) */}
+             {step === 2 && linkedPoId && (
+                <div className="space-y-3 mb-6 animate-in fade-in slide-in-from-top-2">
+                    {/* Perfect State */}
+                    {anomalies.isPerfect && (
+                        <div className={`p-3 rounded-xl border flex items-center gap-3 ${
+                            isDark ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                        }`}>
+                            <CheckCircle2 size={18} />
+                            <span className="font-bold text-sm">Alles vollständig – keine Abweichungen.</span>
+                        </div>
+                    )}
+                    {/* Missing Items Warning (Red) */}
+                    {anomalies.hasMissing && (
+                        <div className={`p-4 rounded-xl border flex items-center gap-4 ${
+                            isDark ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-700'
+                        }`}>
+                            <div className={`p-2 rounded-full shrink-0 ${isDark ? 'bg-red-500/20' : 'bg-red-100'}`}>
+                                <AlertTriangle size={24} className={isDark ? 'text-red-400' : 'text-red-600'} />
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-sm">Achtung: Teillieferung erkannt</h4>
+                                <p className="text-xs opacity-90 mt-0.5">Fehlende Mengen werden vermerkt.</p>
+                            </div>
+                        </div>
+                    )}
+                    {/* Extra Items Warning (Yellow) */}
+                    {anomalies.hasExtra && (
+                        <div className={`p-4 rounded-xl border flex items-center gap-4 ${
+                            isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'
+                        }`}>
+                            <div className={`p-2 rounded-full shrink-0 ${isDark ? 'bg-amber-500/20' : 'bg-amber-100'}`}>
+                                <AlertTriangle size={24} className={isDark ? 'text-amber-400' : 'text-amber-600'} />
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-sm">Hinweis: Überlieferung erkannt</h4>
+                                <p className="text-xs opacity-90 mt-0.5">Sie haben mehr erhalten als bestellt. Bitte wählen Sie eine Aktion für die entsprechenden Positionen.</p>
+                            </div>
+                        </div>
+                    )}
                 </div>
              )}
 
-             {step === 2 && deliveryStatusFeedback === 'perfect' && (
-                <div className={`mb-6 p-3 rounded-xl border flex items-center gap-3 animate-in fade-in slide-in-from-top-2 ${
-                    isDark ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                }`}>
-                    <CheckCircle2 size={18} />
-                    <span className="font-bold text-sm">Alles vollständig – keine Abweichungen.</span>
-                </div>
-             )}
-
-             {/* ADDED ITEMS LIST (CART) */}
+             {/* ADDED ITEMS LIST (CART) - Table Structure Remains Identical */}
              <div className="space-y-3 relative z-0">
                <h4 className="text-sm font-bold opacity-70 uppercase tracking-wider mb-2">Erfasste Positionen ({cart.length})</h4>
                
@@ -1018,80 +1297,137 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                       <table className={`w-full text-sm text-left ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'}`}>
                          <thead className={`text-xs uppercase font-bold ${isDark ? 'bg-slate-950 text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
                             <tr>
-                               <th className="px-4 py-3">Artikel</th>
-                               {linkedPoId && <th className="px-4 py-3 w-24 text-center">Bestellt</th>}
-                               <th className="px-4 py-3 w-24 text-center">{linkedPoId ? 'Geliefert' : 'Menge'}</th>
-                               {linkedPoId && <th className="px-4 py-3 w-20 text-center text-red-500">Offen</th>}
-                               {linkedPoId && <th className="px-4 py-3 w-20 text-center text-amber-500">Zu viel</th>}
-                               <th className="px-4 py-3 w-16 text-center">Problem</th>
-                               <th className="px-4 py-3 w-16 text-center">Aktion</th>
+                               <th className="px-3 py-2">Artikel</th>
+                               {linkedPoId && <th className="px-3 py-2 w-24 text-center">Bestellt</th>}
+                               {showHistoryColumn && <th className="px-3 py-2 w-20 text-center text-slate-400">Bisher</th>}
+                               <th className="px-3 py-2 w-24 text-center">{linkedPoId ? (showHistoryColumn ? 'Aktuell' : 'Geliefert') : 'Menge'}</th>
+                               {linkedPoId && <th className="px-3 py-2 w-20 text-center text-red-500">Offen</th>}
+                               {linkedPoId && <th className="px-3 py-2 w-20 text-center text-amber-500">Zu viel</th>}
+                               <th className="px-3 py-2 w-16 text-center">Problem</th>
+                               <th className="px-3 py-2 w-16 text-center">Abgelehnt</th>
+                               <th className="px-3 py-2 w-16 text-center">Aktion</th>
                             </tr>
                          </thead>
                          <tbody className={`divide-y ${isDark ? 'divide-slate-800' : 'divide-slate-100'}`}>
                             {cart.map((line, idx) => {
-                               // Calculation Logic for new columns
-                               const ordered = line.orderedQty || 0;
-                               const received = line.qty;
-                               const pending = Math.max(0, ordered - received);
-                               const over = Math.max(0, received - ordered);
+                               // --- CUMULATIVE CALCULATION ---
+                               const ordered = line.orderedQty ?? 0;
+                               const previous = line.previouslyReceived || 0;
+                               const current = line.qty;
+                               const totalReceived = previous + current;
+                               
+                               const pending = Math.max(0, ordered - totalReceived);
+                               const over = Math.max(0, totalReceived - ordered);
+                               
                                const hasIssue = line.isDamaged || (line.issueNotes && line.issueNotes.length > 0);
+                               const isRejected = line.isRejected;
+                               const showOverResolution = linkedPoId && over > 0 && !isRejected;
 
                                return (
                                <React.Fragment key={idx}>
-                                   <tr className={`group transition-colors ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'} ${line.showIssueInputs ? (isDark ? 'bg-slate-800/30' : 'bg-slate-50/80') : ''}`}>
-                                      <td className="px-4 py-3">
-                                         <div className="font-bold">{line.item.name}</div>
-                                         <div className="text-xs opacity-60 font-mono">Artikelnummer: {line.item.sku}</div>
-                                         <div className="text-xs opacity-50 mt-0.5">System: {line.item.system}</div>
+                                   <tr className={`group transition-colors ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'} ${line.showIssueInputs || showOverResolution ? (isDark ? 'bg-slate-800/30' : 'bg-slate-50/80') : ''} ${isRejected ? 'bg-red-500/5' : ''}`}>
+                                      <td className="px-3 py-2">
+                                         <div className={isRejected ? 'opacity-50' : ''}>
+                                            <div className={`font-bold text-sm ${isRejected ? 'line-through text-slate-500' : ''}`}>{line.item.name}</div>
+                                            <div className="text-xs opacity-60 font-mono">{line.item.sku} • {line.item.system}</div>
+                                            {line.isManualAddition && (
+                                                <div className={`mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border ${isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                                                    <AlertTriangle size={8} /> Manuell
+                                                </div>
+                                            )}
+                                         </div>
+                                         {isRejected && (
+                                             <div className="mt-2 animate-in fade-in">
+                                                 <input 
+                                                     value={line.rejectionReason}
+                                                     onChange={(e) => updateCartItem(idx, 'rejectionReason', e.target.value)}
+                                                     placeholder="Grund für Ablehnung..."
+                                                     className={`w-full px-2 py-1 text-xs rounded border outline-none focus:ring-1 focus:ring-red-500 ${isDark ? 'bg-slate-900 border-red-500/30 text-red-400 placeholder:text-red-400/50' : 'bg-white border-red-500/30 text-red-600 placeholder:text-red-300'}`}
+                                                 />
+                                             </div>
+                                         )}
                                       </td>
                                       
-                                      {/* Ordered Column */}
                                       {linkedPoId && (
-                                        <td className="px-4 py-3 text-center">
-                                           <span className="font-mono opacity-70">{line.orderedQty || '-'}</span>
+                                        <td className="px-3 py-2 text-center">
+                                           <span className={`font-mono opacity-70 text-sm ${isRejected ? 'opacity-50' : ''}`}>{line.orderedQty !== undefined ? line.orderedQty : '-'}</span>
                                         </td>
                                       )}
+
+                                      {/* Previously Received Column */}
+                                      {showHistoryColumn && (
+                                          <td className="px-3 py-2 text-center">
+                                              <span className={`font-mono text-sm ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                                                  {line.previouslyReceived || 0}
+                                              </span>
+                                          </td>
+                                      )}
                                       
-                                      {/* Received Input */}
-                                      <td className="px-4 py-3 text-center">
+                                      <td className="px-3 py-2 text-center">
                                          <input 
                                            type="number" 
-                                           value={line.qty}
-                                           onChange={e => updateCartItem(idx, 'qty', parseInt(e.target.value) || 0)}
-                                           className={`w-24 px-2 py-1.5 rounded border text-center font-bold outline-none focus:ring-2 ${isDark ? 'bg-slate-950 border-slate-700 focus:ring-blue-500/30' : 'bg-white border-slate-300 focus:ring-[#0077B5]/20'}`}
+                                           min="0"
+                                           value={line.qty === 0 ? '' : line.qty}
+                                           placeholder="0"
+                                           disabled={isRejected}
+                                           onKeyDown={(e) => {
+                                             if (["-", "e", "E"].includes(e.key)) e.preventDefault();
+                                           }}
+                                           onChange={e => {
+                                             const val = parseInt(e.target.value, 10);
+                                             updateCartItem(idx, 'qty', isNaN(val) ? 0 : Math.max(0, val));
+                                           }}
+                                           className={`w-20 px-1 py-1 h-8 rounded border text-center font-bold text-sm outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${isRejected ? 'line-through text-slate-400 opacity-50' : ''} ${isDark ? 'bg-slate-950 border-slate-700 focus:ring-blue-500/30' : 'bg-white border-slate-300 focus:ring-[#0077B5]/20'}`}
                                          />
                                       </td>
 
-                                      {/* Read-Only Columns */}
                                       {linkedPoId && (
-                                          <td className="px-4 py-3 text-center font-bold text-red-500">
+                                          <td className="px-3 py-2 text-center font-bold text-red-500 text-sm">
                                             {pending > 0 ? pending : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}
                                           </td>
                                       )}
                                       {linkedPoId && (
-                                          <td className="px-4 py-3 text-center font-bold text-amber-500">
+                                          <td className="px-3 py-2 text-center font-bold text-amber-500 text-sm">
                                             {over > 0 ? over : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}
                                           </td>
                                       )}
 
-                                      {/* Problem Toggle Button */}
-                                      <td className="px-4 py-3 text-center">
+                                      <td className="px-3 py-2 text-center">
                                          <button 
                                             onClick={() => toggleIssueInputs(idx)}
-                                            className={`p-2 rounded-lg transition-all ${
+                                            disabled={isRejected}
+                                            className={`p-1.5 rounded-lg transition-all ${
                                                 hasIssue 
                                                 ? 'bg-red-500 text-white shadow-md shadow-red-500/20' 
                                                 : line.showIssueInputs
                                                     ? 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
                                                     : 'text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10'
-                                            }`}
+                                            } disabled:opacity-30 disabled:cursor-not-allowed`}
                                             title="Problem melden"
                                          >
                                             <AlertTriangle size={16} />
                                          </button>
                                       </td>
 
-                                      <td className="px-4 py-3 text-center">
+                                      <td className="px-3 py-2 text-center">
+                                         <label className="flex items-center justify-center cursor-pointer">
+                                             <input 
+                                                 type="checkbox" 
+                                                 checked={isRejected} 
+                                                 onChange={(e) => updateCartItem(idx, 'isRejected', e.target.checked)} 
+                                                 className="hidden"
+                                             />
+                                             <div className={`p-1.5 rounded-lg transition-colors ${
+                                                 isRejected 
+                                                    ? 'bg-red-500/10 text-red-500 border border-red-500/30' 
+                                                    : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                                             }`}>
+                                                <Ban size={16} />
+                                             </div>
+                                         </label>
+                                      </td>
+
+                                      <td className="px-3 py-2 text-center">
                                          <button 
                                            onClick={() => removeCartItem(idx)}
                                            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
@@ -1101,44 +1437,113 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                       </td>
                                    </tr>
                                    
-                                   {/* Expanded Issue Inputs */}
-                                   {line.showIssueInputs && (
-                                       <tr className={`animate-in fade-in slide-in-from-top-1 ${isDark ? 'bg-slate-800/30' : 'bg-slate-50/80'}`}>
-                                           <td colSpan={linkedPoId ? 7 : 4} className="px-4 pb-4 pt-1">
-                                               <div className={`p-4 rounded-xl border flex flex-col md:flex-row gap-4 items-start ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'}`}>
-                                                   <div className="flex-1 space-y-2 w-full">
-                                                       <div className="flex items-center justify-between">
-                                                           <label className="text-xs font-bold uppercase text-red-500 flex items-center gap-1.5">
-                                                               <AlertTriangle size={12}/> Problem melden
-                                                           </label>
+                                   {/* Over-Delivery Resolution Row */}
+                                   {showOverResolution && (
+                                       <tr className={`animate-in fade-in slide-in-from-top-1 ${isDark ? 'bg-amber-500/5' : 'bg-amber-50'}`}>
+                                           <td colSpan={linkedPoId ? (showHistoryColumn ? 9 : 8) : 5} className="px-2 py-2">
+                                               <div className={`flex flex-col gap-3 p-3 rounded-lg border ${isDark ? 'border-amber-500/20' : 'border-amber-200'}`}>
+                                                   
+                                                   {/* Top Row: Info & Action Buttons */}
+                                                   <div className="flex flex-col md:flex-row md:items-center gap-3">
+                                                       <div className="flex items-center gap-2 text-amber-500">
+                                                           <Info size={16} />
+                                                           <span className="text-xs font-bold uppercase">Achtung: {over} Stück zu viel (Gesamt)</span>
                                                        </div>
-                                                       <input 
-                                                           value={line.issueNotes}
-                                                           onChange={(e) => updateCartItem(idx, 'issueNotes', e.target.value)}
-                                                           placeholder="Beschreiben Sie das Problem (z.B. Falscher Artikel geliefert)..."
-                                                           className={`w-full text-sm p-2 rounded-lg border outline-none focus:ring-1 focus:ring-red-500 ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-white border-slate-300'}`}
-                                                       />
+                                                       <div className="h-4 w-px bg-amber-500/20 hidden md:block"></div>
+                                                       <div className="flex items-center gap-2 flex-1">
+                                                           {/* RETURN TOGGLE BUTTON */}
+                                                           <button 
+                                                                onClick={() => {
+                                                                    const newValue = line.overDeliveryResolution === 'return' ? null : 'return';
+                                                                    updateCartItem(idx, 'overDeliveryResolution', newValue);
+                                                                }}
+                                                                className={`flex-1 md:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                                                                    line.overDeliveryResolution === 'return'
+                                                                    ? 'bg-amber-600 text-white border-transparent shadow-md shadow-amber-600/20'
+                                                                    : 'bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20'
+                                                                }`}
+                                                           >
+                                                               <LogOut size={14} /> Zurückweisen
+                                                           </button>
+                                                           
+                                                           {/* KEEP TOGGLE BUTTON */}
+                                                           <button 
+                                                                onClick={() => {
+                                                                    const newValue = line.overDeliveryResolution === 'keep' ? null : 'keep';
+                                                                    updateCartItem(idx, 'overDeliveryResolution', newValue);
+                                                                }}
+                                                                className={`flex-1 md:flex-none flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                                                                    line.overDeliveryResolution === 'keep'
+                                                                    ? 'bg-emerald-600 text-white border-transparent shadow-md shadow-emerald-600/20'
+                                                                    : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/20'
+                                                                }`}
+                                                           >
+                                                               <PlusCircle size={14} /> Behalten (Akzeptieren)
+                                                           </button>
+                                                       </div>
                                                    </div>
-                                                   <div className="pt-6">
-                                                       <label 
-                                                            className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${
-                                                                line.isDamaged 
-                                                                    ? 'bg-red-500/10 border-red-500 text-red-600 dark:text-red-400' 
-                                                                    : 'hover:bg-slate-100 dark:hover:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-500'
-                                                            }`}
-                                                       >
-                                                            <div className={`shrink-0 ${line.isDamaged ? 'text-red-500' : 'text-slate-400'}`}>
-                                                                {line.isDamaged ? <CheckSquare size={18} /> : <div className="w-[18px] h-[18px] rounded border-2 border-current" />}
-                                                            </div>
-                                                            <input 
-                                                                type="checkbox" 
-                                                                className="hidden" 
-                                                                checked={line.isDamaged} 
-                                                                onChange={(e) => updateCartItem(idx, 'isDamaged', e.target.checked)} 
-                                                            />
-                                                            <span className="font-bold text-sm">Ware beschädigt</span>
-                                                       </label>
-                                                   </div>
+
+                                                   {/* Return Logistics Sub-Form (CONDITIONAL: Only show if Return is selected) */}
+                                                   {line.overDeliveryResolution === 'return' && (
+                                                       <div className={`mt-3 pt-3 border-t border-dashed grid grid-cols-1 md:grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-2 ${isDark ? 'border-amber-500/20' : 'border-amber-200/60'}`}>
+                                                           <div className="space-y-1">
+                                                               <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-amber-400/70' : 'text-amber-700/70'}`}>
+                                                                   Rückversand / Abholung *
+                                                               </label>
+                                                               <input 
+                                                                   value={line.returnMethod || ''}
+                                                                   onChange={(e) => updateCartItem(idx, 'returnMethod', e.target.value)}
+                                                                   placeholder="z.B. DHL, Abholung durch Fahrer..."
+                                                                   className={`w-full text-xs px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white placeholder:text-slate-600' : 'bg-white border-amber-200 text-slate-900 placeholder:text-slate-400'}`}
+                                                               />
+                                                           </div>
+                                                           <div className="space-y-1">
+                                                               <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-amber-400/50' : 'text-amber-700/50'}`}>
+                                                                   Tracking Nr. (Optional)
+                                                               </label>
+                                                               <input 
+                                                                   value={line.returnTrackingId || ''}
+                                                                   onChange={(e) => updateCartItem(idx, 'returnTrackingId', e.target.value)}
+                                                                   placeholder="Sendungsnummer..."
+                                                                   className={`w-full text-xs px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white placeholder:text-slate-600' : 'bg-white border-amber-200 text-slate-900 placeholder:text-slate-400'}`}
+                                                               />
+                                                           </div>
+                                                       </div>
+                                                   )}
+                                               </div>
+                                           </td>
+                                       </tr>
+                                   )}
+
+                                   {line.showIssueInputs && !isRejected && (
+                                       <tr className={`animate-in fade-in slide-in-from-top-1 ${isDark ? 'bg-slate-800/30' : 'bg-slate-50/80'}`}>
+                                           <td colSpan={linkedPoId ? (showHistoryColumn ? 9 : 8) : 5} className="px-2 pb-2 pt-0">
+                                               <div className={`flex items-center gap-3 p-2 rounded-lg border ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'}`}>
+                                                   <label 
+                                                        className={`flex items-center gap-2 cursor-pointer transition-colors px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 ${
+                                                            line.isDamaged 
+                                                                ? 'text-red-600 dark:text-red-400' 
+                                                                : 'text-slate-500'
+                                                        }`}
+                                                   >
+                                                        <div className={`shrink-0 ${line.isDamaged ? 'text-red-500' : 'text-slate-400'}`}>
+                                                            {line.isDamaged ? <CheckSquare size={16} /> : <div className="w-4 h-4 rounded border-2 border-current" />}
+                                                        </div>
+                                                        <input 
+                                                            type="checkbox" 
+                                                            className="hidden" 
+                                                            checked={line.isDamaged} 
+                                                            onChange={(e) => updateCartItem(idx, 'isDamaged', e.target.checked)} 
+                                                        />
+                                                        <span className="font-bold text-xs">Beschädigt</span>
+                                                   </label>
+                                                   <div className="h-4 w-px bg-slate-500/20"></div>
+                                                   <input 
+                                                       value={line.issueNotes}
+                                                       onChange={(e) => updateCartItem(idx, 'issueNotes', e.target.value)}
+                                                       placeholder="Problembeschreibung (z.B. Falsche Ware)..."
+                                                       className={`flex-1 text-xs px-2 py-1.5 h-8 rounded border outline-none focus:ring-1 focus:ring-red-500 ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-white border-slate-300'}`}
+                                                   />
                                                </div>
                                            </td>
                                        </tr>
@@ -1150,17 +1555,46 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                       </table>
                    </div>
 
-                   {/* MOBILE CARDS */}
+                   {/* MOBILE CARDS - Using same data, just different layout */}
                    <div className="md:hidden space-y-3">
                      {cart.map((line, idx) => {
                          const hasIssue = line.isDamaged || (line.issueNotes && line.issueNotes.length > 0);
+                         
+                         // --- CUMULATIVE CALCULATION FOR MOBILE ---
+                         const ordered = line.orderedQty ?? 0;
+                         const previous = line.previouslyReceived || 0;
+                         const current = line.qty;
+                         const totalReceived = previous + current;
+                         const over = Math.max(0, totalReceived - ordered);
+                         
+                         const showOverResolution = linkedPoId && over > 0 && !line.isRejected;
+
                          return (
-                           <div key={idx} className={`p-4 rounded-xl border flex flex-col gap-3 group ${isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-slate-200 shadow-sm'}`}>
+                           <div key={idx} className={`p-4 rounded-xl border flex flex-col gap-3 group ${isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-slate-200 shadow-sm'} ${line.isRejected ? 'bg-red-500/5 border-red-500/20' : ''}`}>
+                              {/* ... Mobile Layout Content ... */}
+                              {/* Content remains visually same as previous implementation */}
                               <div className="flex justify-between items-start">
                                  <div className="min-w-0">
-                                    <div className="font-bold text-sm truncate">{line.item.name}</div>
-                                    <div className="text-xs text-slate-500">Artikelnummer: {line.item.sku}</div>
-                                    <div className="text-xs text-slate-500 opacity-70">System: {line.item.system}</div>
+                                    <div className={line.isRejected ? 'opacity-50' : ''}>
+                                        <div className={`font-bold text-sm truncate ${line.isRejected ? 'line-through' : ''}`}>{line.item.name}</div>
+                                        <div className="text-xs text-slate-500">Artikelnummer: {line.item.sku}</div>
+                                        <div className="text-xs text-slate-500 opacity-70">System: {line.item.system}</div>
+                                        {line.isManualAddition && (
+                                            <div className={`mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                                                <AlertTriangle size={10} /> Nicht Teil der Bestellung
+                                            </div>
+                                        )}
+                                    </div>
+                                    {line.isRejected && (
+                                         <div className="mt-2">
+                                             <input 
+                                                 value={line.rejectionReason}
+                                                 onChange={(e) => updateCartItem(idx, 'rejectionReason', e.target.value)}
+                                                 placeholder="Grund für Ablehnung..."
+                                                 className={`w-full px-2 py-1 text-xs rounded border outline-none ${isDark ? 'bg-slate-900 border-red-500/30 text-red-400' : 'bg-white border-red-500/30 text-red-600'}`}
+                                             />
+                                         </div>
+                                     )}
                                  </div>
                                  <button 
                                    onClick={() => removeCartItem(idx)}
@@ -1169,61 +1603,152 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                    <Trash2 size={16} />
                                  </button>
                               </div>
-                              
-                              {/* Mobile Inputs */}
                               <div className="grid grid-cols-2 gap-3 items-center">
                                   {linkedPoId && (
-                                    <div className="text-left">
-                                        <span className="text-[10px] font-bold opacity-60 uppercase block">Bestellt</span>
-                                        <span className="text-sm font-mono opacity-80">{line.orderedQty}</span>
+                                    <div className={`text-left ${line.isRejected ? 'opacity-50' : ''}`}>
+                                        <div className="flex flex-col gap-1">
+                                            <div>
+                                                <span className="text-[10px] font-bold opacity-60 uppercase block">Bestellt</span>
+                                                <span className="text-sm font-mono opacity-80">{line.orderedQty !== undefined ? line.orderedQty : '-'}</span>
+                                            </div>
+                                            {(line.previouslyReceived || 0) > 0 && (
+                                                <div>
+                                                    <span className="text-[10px] font-bold opacity-60 uppercase block">Bisher</span>
+                                                    <span className="text-sm font-mono opacity-50">{line.previouslyReceived}</span>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                   )}
                                   <div className="text-right ml-auto">
-                                     <span className="text-[10px] font-bold opacity-60 uppercase block mb-1">{linkedPoId ? 'Geliefert' : 'Menge'}</span>
+                                     <span className="text-[10px] font-bold opacity-60 uppercase block mb-1">{linkedPoId ? 'Aktuell' : 'Menge'}</span>
                                      <input 
                                        type="number" 
-                                       value={line.qty}
-                                       onChange={e => updateCartItem(idx, 'qty', parseInt(e.target.value) || 0)}
-                                       className={`w-24 px-2 py-2 rounded border text-sm font-bold text-center ${isDark ? 'bg-slate-900 border-slate-600' : 'bg-slate-50 border-slate-300'}`}
+                                       min="0"
+                                       value={line.qty === 0 ? '' : line.qty}
+                                       disabled={line.isRejected}
+                                       placeholder="0"
+                                       onChange={e => {
+                                         const val = parseInt(e.target.value, 10);
+                                         updateCartItem(idx, 'qty', isNaN(val) ? 0 : Math.max(0, val));
+                                       }}
+                                       className={`w-24 px-2 py-2 rounded border text-sm font-bold text-center ${line.isRejected ? 'line-through text-slate-400 opacity-50' : ''} ${isDark ? 'bg-slate-900 border-slate-600' : 'bg-slate-50 border-slate-300'}`}
                                      />
                                   </div>
                               </div>
-                              
-                              {/* Mobile Issue Toggle */}
-                              <button 
-                                onClick={() => toggleIssueInputs(idx)}
-                                className={`w-full py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 border transition-all ${
-                                    hasIssue || line.showIssueInputs
-                                    ? 'bg-red-500/10 border-red-500/30 text-red-500'
-                                    : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
-                                }`}
-                              >
-                                  <AlertTriangle size={14} /> 
-                                  {line.showIssueInputs ? 'Problem verbergen' : hasIssue ? 'Problem gemeldet' : 'Problem melden?'}
-                              </button>
 
-                              {/* Mobile Issue Inputs */}
-                              {line.showIssueInputs && (
+                              {showOverResolution && (
+                                <div className={`p-3 rounded-lg border flex flex-col gap-3 ${isDark ? 'border-amber-500/20 bg-amber-500/5' : 'border-amber-200 bg-amber-50'}`}>
+                                    <div className="flex items-center gap-2 text-amber-500 mb-1">
+                                        <Info size={14} />
+                                        <span className="text-xs font-bold uppercase">{over} Stück zu viel (Gesamt)</span>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={() => {
+                                                const newValue = line.overDeliveryResolution === 'return' ? null : 'return';
+                                                updateCartItem(idx, 'overDeliveryResolution', newValue);
+                                            }}
+                                            className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                                                line.overDeliveryResolution === 'return'
+                                                ? 'bg-amber-600 text-white border-transparent shadow-md shadow-amber-600/20'
+                                                : 'bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20'
+                                            }`}
+                                        >
+                                            Zurückweisen
+                                        </button>
+                                        <button 
+                                            onClick={() => {
+                                                const newValue = line.overDeliveryResolution === 'keep' ? null : 'keep';
+                                                updateCartItem(idx, 'overDeliveryResolution', newValue);
+                                            }}
+                                            className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                                                line.overDeliveryResolution === 'keep'
+                                                ? 'bg-emerald-600 text-white border-transparent shadow-md shadow-emerald-600/20'
+                                                : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/20'
+                                            }`}
+                                        >
+                                            Behalten
+                                        </button>
+                                    </div>
+
+                                    {/* Mobile Return Logistics Form - CONDITIONAL */}
+                                    {line.overDeliveryResolution === 'return' && (
+                                        <div className={`mt-2 pt-3 border-t border-dashed space-y-3 animate-in fade-in slide-in-from-top-1 ${isDark ? 'border-amber-500/20' : 'border-amber-200/60'}`}>
+                                            <div className="space-y-1">
+                                                <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-amber-400/70' : 'text-amber-700/70'}`}>
+                                                    Rückversand / Abholung *
+                                                </label>
+                                                <input 
+                                                    value={line.returnMethod || ''}
+                                                    onChange={(e) => updateCartItem(idx, 'returnMethod', e.target.value)}
+                                                    placeholder="z.B. DHL, Abholung..."
+                                                    className={`w-full text-xs px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-amber-200 text-slate-900'}`}
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className={`text-[10px] font-bold uppercase tracking-wider ${isDark ? 'text-amber-400/50' : 'text-amber-700/50'}`}>
+                                                    Tracking Nr. (Optional)
+                                                </label>
+                                                <input 
+                                                    value={line.returnTrackingId || ''}
+                                                    onChange={(e) => updateCartItem(idx, 'returnTrackingId', e.target.value)}
+                                                    placeholder="Sendungsnummer..."
+                                                    className={`w-full text-xs px-3 py-2 rounded-lg border outline-none focus:ring-1 focus:ring-amber-500 ${isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-amber-200 text-slate-900'}`}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                              )}
+
+                              <div className="flex gap-2">
+                                  <button 
+                                    onClick={() => toggleIssueInputs(idx)}
+                                    disabled={line.isRejected}
+                                    className={`flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 border transition-all ${
+                                        hasIssue || line.showIssueInputs
+                                        ? 'bg-red-500/10 border-red-500/30 text-red-500'
+                                        : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+                                    } disabled:opacity-30`}
+                                  >
+                                      <AlertTriangle size={14} /> 
+                                      {line.showIssueInputs ? 'Verbergen' : hasIssue ? 'Problem' : 'Problem?'}
+                                  </button>
+                                  
+                                  <button 
+                                      onClick={() => updateCartItem(idx, 'isRejected', !line.isRejected)}
+                                      className={`flex-1 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 border transition-all ${
+                                          line.isRejected 
+                                            ? 'bg-red-500 text-white border-red-600' 
+                                            : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+                                      }`}
+                                  >
+                                      <Ban size={14} />
+                                      {line.isRejected ? 'Abgelehnt' : 'Ablehnen'}
+                                  </button>
+                              </div>
+                              {line.showIssueInputs && !line.isRejected && (
                                   <div className={`p-3 rounded-lg border space-y-3 animate-in fade-in slide-in-from-top-1 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
                                        <div>
                                            <label className="text-xs font-bold uppercase text-slate-500 mb-1 block">Bemerkung / Fehler</label>
                                            <input 
                                                 value={line.issueNotes}
                                                 onChange={(e) => updateCartItem(idx, 'issueNotes', e.target.value)}
-                                                className={`w-full text-sm p-2 rounded-lg border outline-none focus:ring-1 focus:ring-red-500 ${isDark ? 'bg-slate-950 border-slate-700' : 'bg-white border-slate-300'}`}
+                                                className={`w-full text-sm p-2 rounded-lg border outline-none focus:ring-1 focus:ring-red-500 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-300'}`}
                                                 placeholder="..."
                                            />
                                        </div>
                                        <label className="flex items-center gap-2 cursor-pointer">
-                                           <div className={`shrink-0 ${line.isDamaged ? 'text-red-500' : 'text-slate-400'}`}>
-                                                {line.isDamaged ? <CheckSquare size={18} /> : <div className="w-[18px] h-[18px] rounded border-2 border-current" />}
-                                           </div>
                                            <input 
                                                 type="checkbox" 
                                                 className="hidden" 
                                                 checked={line.isDamaged} 
                                                 onChange={(e) => updateCartItem(idx, 'isDamaged', e.target.checked)} 
                                            />
+                                           <div className={`shrink-0 ${line.isDamaged ? 'text-red-500' : 'text-slate-400'}`}>
+                                                {line.isDamaged ? <CheckSquare size={18} /> : <div className="w-[18px] h-[18px] rounded border-2 border-current" />}
+                                           </div>
                                            <span className={`text-sm font-bold ${line.isDamaged ? 'text-red-500' : 'text-slate-500'}`}>Ware beschädigt</span>
                                        </label>
                                   </div>
@@ -1238,110 +1763,199 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
           </div>
         )}
 
-        {/* STEP 3: REVIEW & COMPLETE */}
+        {/* STEP 3: ABSCHLUSS & ZUSAMMENFASSUNG */}
         {step === 3 && (
-          <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in slide-in-from-right-4">
-             <div className="mb-4">
+          <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in slide-in-from-right-4">
+             {/* ... Step 3 Content (Summary) ... */}
+             {/* Retaining existing step 3 layout */}
+            <div className="mb-4">
                 <h3 className="text-lg font-bold mb-1">Schritt 3: Überprüfung & Abschluss</h3>
-                <p className="text-sm opacity-70">Bitte überprüfen Sie die Positionen und buchen Sie den Wareneingang.</p>
-             </div>
+                <p className="text-sm opacity-70">Bitte überprüfen Sie die Angaben vor der Buchung.</p>
+            </div>
 
-             <div className="p-5 rounded-2xl border bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-800 mb-6">
-                {/* ... Header summary ... */}
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                   <div>
-                      <div className="opacity-60 text-xs uppercase font-bold">Lieferschein</div>
-                      <div className="font-semibold">{headerData.lieferscheinNr}</div>
-                   </div>
-                   <div>
-                      <div className="opacity-60 text-xs uppercase font-bold">Bestell Nr.</div>
-                      <div className="font-semibold">{headerData.bestellNr || 'Nicht angegeben'}</div>
-                   </div>
-                   <div>
-                      <div className="opacity-60 text-xs uppercase font-bold">Lieferant</div>
-                      <div className="font-semibold">{headerData.lieferant}</div>
-                   </div>
-                   <div>
-                      <div className="opacity-60 text-xs uppercase font-bold">Lagerort</div>
-                      <div className="font-semibold flex items-center gap-1"><MapPin size={12}/> {headerData.warehouseLocation}</div>
-                   </div>
-                   <div>
-                      <div className="opacity-60 text-xs uppercase font-bold">Datum</div>
-                      <div className="font-semibold">{new Date(headerData.lieferdatum).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })}</div>
-                   </div>
-                </div>
-             </div>
-
-             {/* Status Selector in Step 3 */}
-             <div className="space-y-1.5 mb-6">
-                <label className="text-xs font-bold uppercase tracking-wider opacity-70">Status des Wareneingangs</label>
-                <select 
-                    value={headerData.status} 
-                    onChange={(e) => setHeaderData({...headerData, status: e.target.value})}
-                    className={`w-full p-3 rounded-xl border outline-none focus:ring-2 transition-all font-bold ${
-                        isDark ? 'bg-slate-900 border-slate-700 focus:ring-blue-500/30' : 'bg-white border-slate-200 focus:ring-[#0077B5]/20'
-                    }`}
-                >
-                    {TRANSACTION_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <p className="text-xs opacity-50 px-1">
-                    Der Status wurde automatisch basierend auf den Mengen berechnet, kann aber manuell angepasst werden.
-                </p>
-             </div>
-
-             {/* Conditional Project Warning Banner */}
-             {headerData.status === 'Projekt' && (
-                <div className={`p-4 rounded-xl border flex items-start gap-4 mb-6 animate-in fade-in slide-in-from-top-2 ${
-                    isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-200 text-blue-700'
+            <div className={`p-4 rounded-xl border flex items-center gap-4 ${
+                ['Gebucht'].includes(headerData.status) 
+                    ? isDark ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                    : ['Übermenge'].includes(headerData.status) 
+                        ? isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'
+                        : isDark ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-red-50 border-red-200 text-red-700'
+            }`}>
+                <div className={`p-2 rounded-full shrink-0 ${
+                    ['Gebucht'].includes(headerData.status) 
+                        ? isDark ? 'bg-emerald-500/20' : 'bg-emerald-100'
+                        : ['Übermenge'].includes(headerData.status) 
+                            ? isDark ? 'bg-amber-500/20' : 'bg-amber-100'
+                            : isDark ? 'bg-red-500/20' : 'bg-red-100'
                 }`}>
-                    <div className={`p-2 rounded-full shrink-0 ${isDark ? 'bg-blue-500/20' : 'bg-blue-100'}`}>
-                        <Briefcase size={24} className={isDark ? 'text-blue-400' : 'text-blue-600'} />
+                    {['Gebucht'].includes(headerData.status) ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
+                </div>
+                <div>
+                    <h4 className="font-bold text-lg">Status: {headerData.status}</h4>
+                    <p className="text-sm opacity-90 mt-0.5">
+                        {headerData.status === 'Gebucht' ? 'Wareneingang ist vollständig und fehlerfrei.' :
+                         headerData.status === 'Abgelehnt' ? 'Die gesamte Lieferung wurde abgelehnt.' :
+                         headerData.status === 'Teillieferung' ? 'Die Lieferung ist unvollständig oder teilweise abgelehnt.' :
+                         headerData.status === 'Übermenge' ? 'Es wurde mehr geliefert als bestellt.' :
+                         'Probleme erkannt (Beschädigung oder falsche Lieferung).'}
+                    </p>
+                </div>
+            </div>
+
+            <div className={`p-4 rounded-xl border ${isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 text-sm">
+                    {/* ... Header Metadata Summary ... */}
+                    <div>
+                        <div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Lieferschein</div>
+                        <div className="font-bold text-base">{headerData.lieferscheinNr}</div>
                     </div>
                     <div>
-                        <h4 className="font-bold text-sm mb-1">Projekt-Buchung erkannt</h4>
-                        <p className="text-sm opacity-90 leading-relaxed">
-                            Beim Speichern wird dieser Wareneingang als Projekt gespeichert. Eine E-Mail wird an das Projektteam versendet: "Ihre Ware ist zur Abholung bereit."
-                        </p>
+                        <div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Datum</div>
+                        <div className="font-medium flex items-center gap-2">
+                            <Calendar size={14} className="opacity-70" /> {new Date(headerData.lieferdatum).toLocaleDateString()}
+                        </div>
                     </div>
+                    <div>
+                        <div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Lieferant</div>
+                        <div className="font-medium flex items-center gap-2 truncate">
+                            <Truck size={14} className="opacity-70 text-[#0077B5]" /> {headerData.lieferant}
+                        </div>
+                    </div>
+                    <div>
+                        <div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Ziel-Lagerort</div>
+                        <div className="font-medium flex items-center gap-2 truncate">
+                            <MapPin size={14} className="opacity-70" /> {headerData.warehouseLocation}
+                        </div>
+                    </div>
+                    {headerData.bestellNr && (
+                        <div className="col-span-2 md:col-span-4 border-t border-slate-500/10 pt-2 mt-1">
+                            <div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Verknüpfte Bestellung</div>
+                            <div className="font-mono font-bold text-[#0077B5] text-sm">{headerData.bestellNr}</div>
+                        </div>
+                    )}
                 </div>
-             )}
+            </div>
 
-             <div className="space-y-3">
-               {cart.length === 0 ? (
-                 <div className="p-8 border rounded-xl border-dashed text-center text-slate-500">
-                    Keine Positionen vorhanden.
-                 </div>
-               ) : (
-                 cart.map((line, idx) => {
-                   const hasIssue = line.isDamaged || (line.issueNotes && line.issueNotes.length > 0);
-                   return (
-                   <div key={idx} className={`p-4 rounded-xl border flex gap-4 items-center relative overflow-hidden ${isDark ? 'bg-slate-800/30 border-slate-700' : 'bg-white border-slate-200 shadow-sm'} ${hasIssue ? 'border-l-4 border-l-red-500' : ''}`}>
-                      <div className="flex-1 min-w-0">
-                         <div className="font-bold text-sm truncate">{line.item.name}</div>
-                         <div className="text-xs text-slate-500 mt-1 space-y-0.5">
-                            <div className="font-mono opacity-90">Artikelnummer: {line.item.sku}</div>
-                            <div className="opacity-70">System: {line.item.system}</div>
-                         </div>
-                         {hasIssue && (
-                             <div className="mt-2 text-xs font-bold text-red-500 flex flex-wrap gap-2">
-                                 {line.isDamaged && <span className="flex items-center gap-1"><AlertCircle size={10} /> Beschädigt</span>}
-                                 {line.issueNotes && <span className="flex items-center gap-1"><MessageSquare size={10} /> {line.issueNotes}</span>}
-                             </div>
-                         )}
-                      </div>
-                      <div className="text-right">
-                         <span className="text-xs opacity-60 uppercase font-bold block">
-                             {linkedPoId ? 'Geliefert' : 'Menge'}
-                         </span>
-                         <span className="text-lg font-bold">{line.qty}</span>
-                         {linkedPoId && (
-                             <div className="text-xs opacity-60">von {line.orderedQty}</div>
-                         )}
-                      </div>
-                   </div>
-                 )})
-               )}
-             </div>
+            <div className={`rounded-xl border overflow-hidden ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <table className="w-full text-sm text-left">
+                    <thead className={`text-xs uppercase font-bold ${isDark ? 'bg-slate-950 text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
+                        <tr>
+                            <th className="px-3 py-2">Artikel</th>
+                            {linkedPoId && <th className="px-3 py-2 w-24 text-center">Bestellt</th>}
+                            <th className="px-3 py-2 w-24 text-center">{linkedPoId ? 'Geliefert' : 'Menge'}</th>
+                            {linkedPoId && <th className="px-3 py-2 w-20 text-center text-red-500">Offen</th>}
+                            {linkedPoId && <th className="px-3 py-2 w-20 text-center text-amber-500">Zu viel</th>}
+                            <th className="px-3 py-2 w-32 text-center">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody className={`divide-y ${isDark ? 'divide-slate-800' : 'divide-slate-100'}`}>
+                        {cart.map((line, idx) => {
+                            if (line.isRejected) {
+                                return (
+                                    <tr key={idx} className={`${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'} opacity-60 bg-red-500/5`}>
+                                        <td className="px-3 py-2">
+                                            <div className="font-bold text-sm line-through">{line.item.name}</div>
+                                            <div className="text-[10px] opacity-60 font-mono">{line.item.sku}</div>
+                                            <div className="text-[10px] text-red-500 font-bold mt-0.5">Grund: {line.rejectionReason || 'Nicht angegeben'}</div>
+                                        </td>
+                                        <td colSpan={linkedPoId ? 4 : 1} className="px-3 py-2 text-center font-mono text-xs opacity-50">
+                                            - Abgelehnt -
+                                        </td>
+                                        <td className="px-3 py-2 text-center">
+                                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-500/10 text-red-500 text-xs font-bold border border-red-500/20">
+                                                <Ban size={12} /> Abgelehnt
+                                            </span>
+                                        </td>
+                                    </tr>
+                                );
+                            }
+
+                            const ordered = line.orderedQty ?? 0;
+                            const received = line.qty;
+                            const pending = Math.max(0, ordered - received);
+                            const over = Math.max(0, received - ordered);
+                            const hasIssue = line.isDamaged || (line.issueNotes && line.issueNotes.length > 0);
+
+                            return (
+                                <tr key={idx} className={isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}>
+                                    <td className="px-3 py-2">
+                                        <div className="font-bold text-sm">{line.item.name}</div>
+                                        <div className="text-[10px] opacity-60 font-mono">{line.item.sku}</div>
+                                        {line.isManualAddition && (
+                                            <div className={`mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border ${isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                                                <AlertTriangle size={8} /> Manuell
+                                            </div>
+                                        )}
+                                        {line.overDeliveryResolution === 'return' && over > 0 && (
+                                            <div className="text-[10px] text-amber-600 font-bold mt-0.5 flex items-center gap-1">
+                                                <LogOut size={10} /> {over}x Rücksendung
+                                            </div>
+                                        )}
+                                        {line.overDeliveryResolution === 'keep' && over > 0 && (
+                                            <div className="text-[10px] text-emerald-600 font-bold mt-0.5 flex items-center gap-1">
+                                                <PlusCircle size={10} /> {over}x Akzeptiert
+                                            </div>
+                                        )}
+                                    </td>
+                                    {linkedPoId && (
+                                        <td className="px-3 py-2 text-center font-mono opacity-70 text-sm">
+                                            {ordered > 0 ? ordered : '-'}
+                                        </td>
+                                    )}
+                                    <td className="px-3 py-2 text-center font-bold text-sm">
+                                        {line.qty}
+                                    </td>
+                                    {linkedPoId && (
+                                        <td className="px-3 py-2 text-center font-bold text-red-500 text-sm">
+                                            {pending > 0 ? pending : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}
+                                        </td>
+                                    )}
+                                    {linkedPoId && (
+                                        <td className="px-3 py-2 text-center font-bold text-amber-500 text-sm">
+                                            {over > 0 ? over : <span className="text-slate-300 dark:text-slate-600 font-normal">-</span>}
+                                        </td>
+                                    )}
+                                    <td className="px-3 py-2 text-center">
+                                        {(() => {
+                                            if (hasIssue) return (
+                                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-500/10 text-red-500 text-xs font-bold border border-red-500/20">
+                                                    <AlertTriangle size={12} /> Problem
+                                                </span>
+                                            );
+                                            if (linkedPoId) {
+                                                if (received < ordered) return (
+                                                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'}`}>
+                                                        <AlertTriangle size={12} /> Fehlmenge
+                                                    </span>
+                                                );
+                                                if (received > ordered) {
+                                                    // Determine label based on action
+                                                    if (line.overDeliveryResolution === 'return') {
+                                                        return (
+                                                            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'}`}>
+                                                                <LogOut size={12} /> Rücksendung
+                                                            </span>
+                                                        );
+                                                    }
+                                                    return (
+                                                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'}`}>
+                                                            <Info size={12} /> Übermenge
+                                                        </span>
+                                                    );
+                                                }
+                                            }
+                                            return (
+                                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-500/10 text-emerald-500 text-xs font-bold border border-emerald-500/20">
+                                                    <Check size={12} /> OK
+                                                </span>
+                                            );
+                                        })()}
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
           </div>
         )}
 
@@ -1378,6 +1992,16 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
            </button>
          )}
       </div>
+
+      {/* PO Selection Modal Portal */}
+      <POSelectionModal 
+        isOpen={showPoModal} 
+        onClose={() => setShowPoModal(false)}
+        orders={availablePOs}
+        receiptMasters={receiptMasters}
+        onSelect={handleSelectPO}
+        theme={theme}
+      />
 
     </div>
   );
