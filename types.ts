@@ -54,7 +54,7 @@ export interface ReceiptComment {
 
 export type ViewMode = 'grid' | 'list';
 export type Theme = 'light' | 'dark';
-export type ActiveModule = 'dashboard' | 'inventory' | 'create-order' | 'goods-receipt' | 'receipt-management' | 'order-management' | 'settings' | 'documentation' | 'stock-logs';
+export type ActiveModule = 'dashboard' | 'inventory' | 'create-order' | 'goods-receipt' | 'receipt-management' | 'order-management' | 'settings' | 'documentation' | 'stock-logs' | 'debug';
 
 export const TRANSACTION_STATUS_OPTIONS = [
   'In Bearbeitung', 
@@ -116,7 +116,7 @@ export interface DeliveryLog {
   items: DeliveryLogItem[];
 }
 
-export type ReceiptMasterStatus = 'Offen' | 'Abgeschlossen';
+export type ReceiptMasterStatus = 'Offen' | 'Abgeschlossen' | 'In Prüfung';
 
 export interface ReceiptMaster {
   id: string;

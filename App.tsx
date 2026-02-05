@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { 
   MOCK_ITEMS, MOCK_RECEIPT_HEADERS, MOCK_RECEIPT_ITEMS, MOCK_COMMENTS, 
@@ -18,6 +19,7 @@ import { CreateOrderWizard } from './components/CreateOrderWizard';
 import { SettingsPage } from './components/SettingsPage';
 import { DocumentationPage } from './components/DocumentationPage';
 import { StockLogView } from './components/StockLogView';
+import { LogicInspector } from './components/LogicInspector';
 
 export default function App() {
   // State
@@ -512,6 +514,7 @@ export default function App() {
                     onAddTicket={handleAddTicket}
                     onUpdateTicket={handleUpdateTicket}
                     onReceiveGoods={handleReceiveGoods}
+                    onNavigate={handleNavigation}
                   />
                 )}
                 
@@ -534,6 +537,7 @@ export default function App() {
                      onReceiveGoods={handleReceiveGoods}
                      onQuickReceipt={handleQuickReceipt}
                      receiptMasters={receiptMasters}
+                     onNavigate={handleNavigation}
                   />
                 )}
 
@@ -556,6 +560,15 @@ export default function App() {
                   <DocumentationPage 
                     theme={theme}
                     onBack={() => handleNavigation('settings')}
+                  />
+                )}
+
+                {activeModule === 'debug' && (
+                  <LogicInspector 
+                    orders={purchaseOrders}
+                    receiptMasters={receiptMasters}
+                    onBack={() => handleNavigation('settings')}
+                    theme={theme}
                   />
                 )}
 

@@ -4,9 +4,9 @@ import { createPortal } from 'react-dom';
 import { 
   Search, Filter, Calendar, Truck, ChevronRight, 
   X, FileText, Pencil, ClipboardCheck, Archive, CheckSquare, Square, PackagePlus,
-  CheckCircle2, Ban
+  CheckCircle2, Ban, Briefcase, Lock, Plus
 } from 'lucide-react';
-import { PurchaseOrder, Theme, ReceiptMaster } from '../types';
+import { PurchaseOrder, Theme, ReceiptMaster, ActiveModule } from '../types';
 
 interface OrderManagementProps {
   orders: PurchaseOrder[]; // Required prop for Single Source of Truth
@@ -16,9 +16,10 @@ interface OrderManagementProps {
   onReceiveGoods: (id: string) => void;
   onQuickReceipt: (id: string) => void;
   receiptMasters: ReceiptMaster[];
+  onNavigate: (module: ActiveModule) => void;
 }
 
-export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme, onArchive, onEdit, onReceiveGoods, onQuickReceipt, receiptMasters }) => {
+export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme, onArchive, onEdit, onReceiveGoods, onQuickReceipt, receiptMasters, onNavigate }) => {
   const isDark = theme === 'dark';
   const [searchTerm, setSearchTerm] = useState('');
   const [showArchived, setShowArchived] = useState(false);
@@ -43,98 +44,100 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
     }).sort((a, b) => new Date(b.dateCreated).getTime() - new Date(a.dateCreated).getTime());
   }, [orders, searchTerm, showArchived]);
 
-  // -- Status Badge Helper --
-  const getStatusStyle = (status: string) => {
-    switch (status) {
-      case 'Offen':
-        return isDark 
-          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-          : 'bg-emerald-100 text-emerald-700 border-emerald-200';
-      case 'Teilweise geliefert':
-        // Amber/Orange for Partial Delivery
-        return isDark 
-          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
-          : 'bg-amber-100 text-amber-700 border-amber-200';
-      case 'Projekt':
-        return isDark 
-          ? 'bg-blue-900/30 text-blue-400 border-blue-900' 
-          : 'bg-blue-100 text-blue-700 border-blue-200';
-      case 'Abgeschlossen':
-      case 'Erledigt':
-        return isDark 
-          ? 'bg-slate-700/50 text-slate-400 border-slate-700' 
-          : 'bg-slate-100 text-slate-500 border-slate-200';
-      default:
-        return isDark 
-          ? 'bg-slate-800 text-slate-400' 
-          : 'bg-slate-100 text-slate-500';
-    }
-  };
-
-  // -- New Visualization Logic: Dual Pills for Project & derived Receipt Status --
+  // -- Cumulative Status Badge Logic --
   const renderStatusBadges = (order: PurchaseOrder) => {
-    // 1. Check for linked receipt status (Derived Logic)
-    // We check if a Master exists for this PO and if its status is 'Offen' (meaning active/waiting)
+    const badges: React.ReactNode[] = [];
     const linkedReceipt = receiptMasters.find(r => r.poId === order.id);
-    const isInCheck = linkedReceipt && linkedReceipt.status === 'Offen';
-
-    // 2. Define Visual Components
-    let mainStatusBadge;
     
+    // 1. Archiviert
     if (order.isArchived) {
-        mainStatusBadge = (
-            <span className="px-2.5 py-1 rounded-full text-xs font-bold border border-slate-500 bg-slate-500/10 text-slate-500">
+        badges.push(
+            <span key="archived" className="px-2.5 py-1 rounded-full text-xs font-bold border border-slate-500 bg-slate-500/10 text-slate-500">
                 Archiviert
             </span>
         );
-    } else if (order.status === 'Projekt') {
-        mainStatusBadge = (
-            <>
-                {/* Pill 1: Offen (Implicit state of a project order) */}
-                <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${getStatusStyle('Offen')}`}>
-                    Offen
-                </span>
-                {/* Pill 2: Projekt Indicator */}
-                <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${getStatusStyle('Projekt')}`}>
-                    Projekt
-                </span>
-            </>
-        );
-    } else {
-        // Default Single Pill - Visual override for long text
-        const label = order.status === 'Teilweise geliefert' ? 'Teillieferung' : order.status;
-        
-        mainStatusBadge = (
-            <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${getStatusStyle(order.status)}`}>
-                {label}
+    }
+
+    // 2. Offen (Show until closed) - GREEN
+    if (!order.isArchived && order.status !== 'Abgeschlossen') {
+         badges.push(
+            <span key="offen" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>
+                Offen
             </span>
         );
     }
 
-    // 3. Render Combined Badges
-    return (
-        <div className="flex flex-wrap items-center gap-2">
-            {mainStatusBadge}
-            
-            {/* Derived 'In Prüfung' Badge (Teams Purple) */}
-            {isInCheck && (
-                <span className={`px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${
-                    isDark 
-                        ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' 
-                        : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20'
-                }`}>
-                    In Prüfung
-                </span>
-            )}
-        </div>
-    );
+    // 3. Projekt (Permanent)
+    if (order.status === 'Projekt') {
+        badges.push(
+            <span key="projekt" className={`px-2.5 py-1 rounded-full text-xs font-bold border flex items-center gap-1 ${isDark ? 'bg-blue-900/30 text-blue-400 border-blue-900' : 'bg-blue-100 text-blue-700 border-blue-200'}`}>
+                <Briefcase size={12} /> Projekt
+            </span>
+        );
+    }
+
+    // 4. In Prüfung (Updated Logic)
+    // Only show if strictly in 'In Prüfung' status and NOT yet processed into 'Teilweise geliefert' or 'Abgeschlossen'
+    // This prevents the purple pill from showing when the order has moved to a partial or closed state.
+    const isReceiptChecking = linkedReceipt && (linkedReceipt.status === 'In Prüfung' || (linkedReceipt.status as any) === 'Wartet auf Prüfung');
+    const isLinkedButWaiting = !linkedReceipt && order.linkedReceiptId;
+    const isProcessed = order.status === 'Teilweise geliefert' || order.status === 'Abgeschlossen';
+
+    if ((isReceiptChecking || isLinkedButWaiting) && !isProcessed) {
+        badges.push(
+            <span key="checking" className={`px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${isDark ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20'}`}>
+                In Prüfung
+            </span>
+        );
+    }
+
+    // 5. Teilweise geliefert
+    if (order.status === 'Teilweise geliefert') {
+         badges.push(
+            <span key="partial" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
+                Teillieferung
+            </span>
+        );
+    }
+
+    // 6. Übermenge (Zu viel > 0 AND Offen = 0 i.e. Fully Received)
+    const isFullyReceived = order.items.every(i => i.quantityReceived >= i.quantityExpected);
+    const hasOverDelivery = linkedReceipt?.deliveries.some(d => d.items.some(i => (i.zuViel || 0) > 0));
+    
+    if (hasOverDelivery && isFullyReceived) {
+         badges.push(
+            <span key="over" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' : 'bg-orange-100 text-orange-700 border-orange-200'}`}>
+                Übermenge
+            </span>
+        );
+    }
+
+    // 7. Schaden (Any Damage Flag)
+    const hasDamage = linkedReceipt?.deliveries.some(d => d.items.some(i => i.damageFlag));
+    if (hasDamage) {
+         badges.push(
+            <span key="damage" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-100 text-red-700 border-red-200'}`}>
+                Schaden
+            </span>
+        );
+    }
+
+    // 8. Geschlossen
+    if (order.status === 'Abgeschlossen') {
+         badges.push(
+            <span key="closed" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>
+                Geschlossen
+            </span>
+        );
+    }
+
+    return <div className="flex flex-wrap items-center gap-2">{badges}</div>;
   };
 
   const handleArchiveClick = (id: string, e: React.MouseEvent) => {
     e.stopPropagation(); 
     if (window.confirm("Möchten Sie diese Bestellung wirklich archivieren?")) {
         onArchive(id);
-        alert("Bestellung archiviert.");
     }
   };
 
@@ -175,6 +178,18 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
         <h2 className="text-2xl font-bold flex items-center gap-2">
           <FileText className="text-[#0077B5]" /> Bestellungen
         </h2>
+        
+        {/* NEW BUTTON FOR CREATING ORDERS */}
+        <button
+            onClick={() => onNavigate('create-order')}
+            className={`px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg ${
+                isDark 
+                 ? 'bg-[#0077B5] hover:bg-[#00A0DC] text-white shadow-blue-500/20' 
+                 : 'bg-[#0077B5] hover:bg-[#00A0DC] text-white shadow-blue-500/20'
+            }`}
+        >
+            <Plus size={20} /> Neue Bestellung
+        </button>
       </div>
 
       {/* Controls */}
@@ -283,6 +298,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                              </button>
                         )}
 
+                        {/* RECEIVE BUTTON - Hidden if Closed */}
                         {!order.isArchived && order.status !== 'Abgeschlossen' && (
                             <button 
                                 onClick={(e) => handleReceiveClick(e, order.id)}
@@ -292,7 +308,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                                 <ClipboardCheck size={18} />
                             </button>
                         )}
-                        {!order.isArchived && (
+
+                        {/* EDIT BUTTON - Disabled/Hidden if Closed or Archived */}
+                        {!order.isArchived && order.status !== 'Abgeschlossen' ? (
                             <button 
                                 onClick={(e) => handleEditClick(e, order)}
                                 className="p-2 hover:bg-[#0077B5]/10 hover:text-[#0077B5] text-slate-400 rounded-full transition-colors"
@@ -300,7 +318,16 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                             >
                                 <Pencil size={18} />
                             </button>
-                        )}
+                        ) : !order.isArchived && order.status === 'Abgeschlossen' ? (
+                            <button 
+                                disabled
+                                className="p-2 opacity-30 cursor-not-allowed text-slate-400"
+                                title="Bearbeitung gesperrt (Abgeschlossen)"
+                            >
+                                <Lock size={18} />
+                            </button>
+                        ) : null}
+
                         {!order.isArchived && (
                             <button 
                                 onClick={(e) => handleArchiveClick(order.id, e)}
@@ -348,6 +375,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                             {selectedOrder.id}
                         </h3>
                         <div className="flex items-center gap-3">
+                            {/* Uses the same render logic as the table row for consistency */}
                             {renderStatusBadges(selectedOrder)}
                             <button onClick={() => setSelectedOrder(null)} className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}>
                                 <X size={20} />

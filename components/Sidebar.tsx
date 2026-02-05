@@ -29,9 +29,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'dashboard', label: 'Lager', icon: <LayoutDashboard size={20} /> },
     { id: 'inventory', label: 'Artikel', icon: <Box size={20} /> },
     { id: 'order-management', label: 'Bestellungen', icon: <FileText size={20} /> },
-    { id: 'create-order', label: 'Bestellung aufgeben', icon: <ShoppingCart size={20} /> },
     { id: 'receipt-management', label: 'Wareneingang', icon: <ClipboardList size={20} /> },
-    { id: 'goods-receipt', label: 'Lieferung prüfen', icon: <Truck size={20} /> },
     { id: 'stock-logs', label: 'Lagerprotokoll', icon: <History size={20} /> },
   ];
 

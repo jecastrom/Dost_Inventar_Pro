@@ -6,9 +6,9 @@ import {
   ArrowLeft, Mail, Phone, StickyNote, Send, Clock, User, X,
   AlertCircle, CheckCircle2, ChevronDown, ChevronUp, FileText, Truck,
   CheckSquare, BarChart3, Ban, Archive, Briefcase, PlayCircle, Info, PackagePlus,
-  AlertTriangle, Layers, Plus, MessageSquare, CornerDownRight, Unlock, Lock, XCircle, AlertOctagon
+  AlertTriangle, Layers, Plus, MessageSquare, CornerDownRight, Unlock, Lock, XCircle, AlertOctagon, ClipboardCheck
 } from 'lucide-react';
-import { ReceiptHeader, ReceiptItem, Theme, ReceiptComment, Ticket, TicketPriority, PurchaseOrder, TicketMessage, ReceiptMaster, DeliveryLog } from '../types';
+import { ReceiptHeader, ReceiptItem, Theme, ReceiptComment, Ticket, TicketPriority, PurchaseOrder, TicketMessage, ReceiptMaster, DeliveryLog, ActiveModule } from '../types';
 
 interface ReceiptManagementProps {
   headers: ReceiptHeader[];
@@ -23,6 +23,7 @@ interface ReceiptManagementProps {
   onAddTicket: (ticket: Ticket) => void;
   onUpdateTicket: (ticket: Ticket) => void;
   onReceiveGoods: (poId: string) => void;
+  onNavigate: (module: ActiveModule) => void;
 }
 
 // Internal Modal Component for New Ticket
@@ -138,7 +139,8 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
   onAddComment,
   onAddTicket,
   onUpdateTicket,
-  onReceiveGoods
+  onReceiveGoods,
+  onNavigate
 }) => {
   const isDark = theme === 'dark';
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -334,12 +336,18 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
       }
   }, [visibleDeliveries, selectedBatchId]);
 
-  // -- Handlers --
-  const handleOpenDetail = (header: ReceiptHeader) => {
-    setSelectedBatchId(header.batchId);
-    setCommentInput('');
-    setActiveTab('items'); 
-    setExpandedDeliveryId(null);
+  // --- Handlers ---
+  
+  const clearFilters = () => {
+    setSearchTerm('');
+    setStatusFilter('all');
+    setDateFrom('');
+    setDateTo('');
+    setFilterUser('');
+  };
+
+  const handleOpenDetail = (row: ReceiptListRow) => {
+    setSelectedBatchId(row.batchId);
   };
 
   const handleBack = () => {
@@ -347,90 +355,100 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
   };
 
   const handleForceClose = () => {
-    if (!selectedBatchId) return;
-    if (window.confirm("Möchten Sie diesen Vorgang wirklich manuell beenden? Der Status wird auf 'Abgeschlossen' gesetzt.")) {
-      onUpdateStatus(selectedBatchId, 'Abgeschlossen');
-    }
-  };
-
-  const handlePostComment = () => {
-    if (selectedBatchId && commentInput.trim()) {
-      onAddComment(selectedBatchId, commentType, commentInput);
-      setCommentInput('');
-    }
-  };
-
-  const handleSaveNewTicket = (subject: string, priority: TicketPriority, description: string) => {
-    if (!selectedBatchId) return;
-
-    const newTicket: Ticket = {
-        id: crypto.randomUUID(),
-        receiptId: selectedBatchId,
-        subject,
-        priority,
-        status: 'Open',
-        messages: [{
-            id: crypto.randomUUID(),
-            author: 'Admin User',
-            text: description,
-            timestamp: Date.now(),
-            type: 'user'
-        }]
-    };
-
-    onAddTicket(newTicket);
-    setShowNewTicketModal(false);
-    setActiveTab('tickets');
-    setExpandedTicketId(newTicket.id);
-  };
-
-  const handleReplyTicket = (ticket: Ticket, close: boolean) => {
-    if (!replyText.trim() && !close) return;
-
-    const messages = [...ticket.messages];
-    if (replyText.trim()) {
-        messages.push({
-            id: crypto.randomUUID(),
-            author: 'Admin User',
-            text: replyText,
-            timestamp: Date.now(),
-            type: 'user'
-        });
-    }
-
-    const updatedTicket: Ticket = {
-        ...ticket,
-        status: close ? 'Closed' : 'Open',
-        messages
-    };
-
-    onUpdateTicket(updatedTicket);
-    setReplyText('');
-  };
-
-  const handleReopenTicket = (ticket: Ticket) => {
-    const updatedTicket: Ticket = {
-        ...ticket,
-        status: 'Open',
-        messages: [...ticket.messages, {
-            id: crypto.randomUUID(),
-            author: 'System',
-            text: 'Fall wurde wiedereröffnet.',
-            timestamp: Date.now(),
-            type: 'system'
-        }]
-    };
-    onUpdateTicket(updatedTicket);
+     if (!selectedBatchId) return;
+     if (window.confirm("Möchten Sie diesen Wareneingang wirklich abschließen?")) {
+         onUpdateStatus(selectedBatchId, 'Abgeschlossen');
+     }
   };
 
   const toggleDeliveryExpand = (id: string) => {
       setExpandedDeliveryId(prev => prev === id ? null : id);
   };
 
-  const clearFilters = () => {
-    setDateFrom('');
-    setDateTo('');
-    setFilterUser('');
+  const handleScrollToDelivery = (deliveryId: string) => {
+      setShowDeliveryList(false);
+      setExpandedDeliveryId(deliveryId);
+      
+      // Allow state update to render content before scrolling
+      setTimeout(() => {
+          const el = document.getElementById(`delivery-${deliveryId}`);
+          if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+      }, 100);
+  };
+
+  const handlePostComment = () => {
+      if (!selectedBatchId || !commentInput.trim()) return;
+      onAddComment(selectedBatchId, commentType, commentInput);
+      setCommentInput('');
+  };
+
+  const handleReopenTicket = (ticket: Ticket) => {
+      onUpdateTicket({
+          ...ticket,
+          status: 'Open',
+          messages: [...ticket.messages, {
+              id: crypto.randomUUID(),
+              author: 'System',
+              text: 'Ticket wurde wiedereröffnet.',
+              timestamp: Date.now(),
+              type: 'system'
+          }]
+      });
+  };
+
+  const handleReplyTicket = (ticket: Ticket, closeAndReply: boolean) => {
+      if (!replyText.trim()) return;
+      
+      const newMsg: TicketMessage = {
+          id: crypto.randomUUID(),
+          author: 'Admin User',
+          text: replyText,
+          timestamp: Date.now(),
+          type: 'user'
+      };
+      
+      let updatedTicket = {
+          ...ticket,
+          messages: [...ticket.messages, newMsg]
+      };
+
+      if (closeAndReply) {
+          updatedTicket.status = 'Closed';
+          updatedTicket.messages.push({
+              id: crypto.randomUUID(),
+              author: 'System',
+              text: 'Ticket wurde geschlossen.',
+              timestamp: Date.now() + 1, // Ensure it's after the user message
+              type: 'system'
+          });
+      }
+
+      onUpdateTicket(updatedTicket);
+      setReplyText('');
+  };
+
+  const handleSaveNewTicket = (subject: string, priority: TicketPriority, description: string) => {
+      if (!selectedBatchId) return;
+      
+      const newTicket: Ticket = {
+          id: crypto.randomUUID(),
+          receiptId: selectedBatchId,
+          subject,
+          priority,
+          status: 'Open',
+          messages: [{
+              id: crypto.randomUUID(),
+              author: 'Admin User',
+              text: description,
+              timestamp: Date.now(),
+              type: 'user'
+          }]
+      };
+      
+      onAddTicket(newTicket);
+      setShowNewTicketModal(false);
   };
 
   // --- Helper Functions for Badges & Icons ---
@@ -445,7 +463,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
             : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20';
     }
     if (status === 'Offen') {
-        return isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-100 text-blue-700 border-blue-200';
+        return isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200';
     }
     if (['Übermenge', 'Zu viel'].includes(status)) {
         return isDark ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' : 'bg-orange-100 text-orange-700 border-orange-200';
@@ -459,35 +477,123 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
     return isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-100 text-blue-700 border-blue-200';
   };
 
-  const getBadgeStyles = (status: string) => {
-    if (status === 'Gebucht' || status === 'Abgeschlossen') {
-        return isDark 
-            ? 'bg-emerald-900/30 border-emerald-500 text-emerald-500' 
-            : 'bg-emerald-100 border-emerald-500 text-emerald-700';
-    }
-    if (status === 'In Prüfung' || status === 'Wartet auf Prüfung') {
-        return isDark 
-            ? 'bg-[#6264A7]/20 border-[#6264A7]/50 text-[#9ea0e6]' 
-            : 'bg-[#6264A7]/10 border-[#6264A7] text-[#6264A7]';
-    }
-    if (['Übermenge', 'Zu viel'].includes(status)) {
-        return isDark 
-            ? 'bg-orange-900/30 border-orange-500 text-orange-500' 
-            : 'bg-orange-100 border-orange-500 text-orange-700';
-    }
-    if (['Teillieferung', 'Untermenge', 'Falsch geliefert'].includes(status)) {
-        return isDark 
-            ? 'bg-amber-900/30 border-amber-500 text-amber-500' 
-            : 'bg-amber-100 border-amber-500 text-amber-700';
-    }
-    if (['Quarantäne', 'Beschädigt', 'Reklamation', 'Abgelehnt', 'Rücklieferung'].includes(status)) {
-        return isDark 
-            ? 'bg-red-900/30 border-red-500 text-red-500' 
-            : 'bg-red-100 border-red-500 text-red-700';
-    }
-    return isDark 
-        ? 'bg-blue-900/30 border-blue-500 text-blue-500' 
-        : 'bg-blue-100 border-blue-500 text-blue-700';
+  const renderReceiptBadges = (header: ReceiptHeader, po: PurchaseOrder | undefined, master: ReceiptMaster | undefined) => {
+      const badges: React.ReactNode[] = [];
+      const status = header.status;
+      const effectiveStatus = (header as any).masterStatus || status; 
+
+      // -- CALCULATE PROCESSED STATES FIRST --
+      const isPartial = effectiveStatus === 'Teillieferung' || po?.status === 'Teilweise geliefert' || effectiveStatus.includes('Teil');
+      const isOver = effectiveStatus === 'Übermenge' || (master?.deliveries.some(d => d.items.some(i => (i.zuViel || 0) > 0)));
+      const isDamaged = effectiveStatus === 'Schaden' || effectiveStatus === 'Beschädigt' || (master?.deliveries.some(d => d.items.some(i => i.damageFlag)));
+      const isWrong = effectiveStatus === 'Falsch geliefert';
+      const isRejected = effectiveStatus === 'Abgelehnt' || effectiveStatus === 'Reklamation';
+      const isBooked = effectiveStatus === 'Gebucht';
+      const isClosed = effectiveStatus === 'Abgeschlossen';
+
+      // If any of these "Result" statuses are true, we consider the receipt processed and should HIDE "In Prüfung".
+      const hasResultStatus = isPartial || isOver || isDamaged || isWrong || isRejected || isBooked || isClosed;
+
+      // 1. Offen (Green) - Shows if PO is open OR Receipt is open (and not closed)
+      const isPOOpen = po && !po.isArchived && po.status !== 'Abgeschlossen';
+      const isReceiptOpen = !po && (effectiveStatus !== 'Abgeschlossen' && effectiveStatus !== 'Gebucht');
+      
+      if (isPOOpen || isReceiptOpen) {
+           badges.push(
+              <span key="offen" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>
+                  Offen
+              </span>
+          );
+      }
+
+      // 2. Projekt (Blue)
+      if (po?.status === 'Projekt') {
+          badges.push(
+              <span key="projekt" className={`px-2.5 py-1 rounded-full text-xs font-bold border flex items-center gap-1 ${isDark ? 'bg-blue-900/30 text-blue-400 border-blue-900' : 'bg-blue-100 text-blue-700 border-blue-200'}`}>
+                  <Briefcase size={12} /> Projekt
+              </span>
+          );
+      }
+
+      // 3. In Prüfung (Purple) - Logic Updated to respect Result Status
+      const isWaiting = header.lieferscheinNr === 'Ausstehend' || effectiveStatus === 'In Prüfung' || effectiveStatus === 'Wartet auf Prüfung';
+      const isMasterChecking = master && (master.status === 'Offen' || master.status === 'In Prüfung');
+
+      if ((isWaiting || isMasterChecking) && !hasResultStatus) {
+           badges.push(
+              <span key="checking" className={`px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${isDark ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20'}`}>
+                  In Prüfung
+              </span>
+          );
+      }
+
+      // 4. Derived Statuses (Partial, Over, Damage, Wrong, etc.)
+      if (isPartial) {
+           badges.push(
+              <span key="partial" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
+                  Teillieferung
+              </span>
+          );
+      }
+
+      if (isOver) {
+           badges.push(
+              <span key="over" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' : 'bg-orange-100 text-orange-700 border-orange-200'}`}>
+                  Übermenge
+              </span>
+          );
+      }
+
+      if (isDamaged) {
+           badges.push(
+              <span key="damage" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-100 text-red-700 border-red-200'}`}>
+                  Schaden
+              </span>
+          );
+      }
+      
+      if (isWrong) {
+           badges.push(
+              <span key="wrong" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
+                  Falsch geliefert
+              </span>
+          );
+      }
+
+      if (isRejected) {
+           badges.push(
+              <span key="rejected" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-100 text-red-700 border-red-200'}`}>
+                  Abgelehnt
+              </span>
+          );
+      }
+
+      if (isBooked) {
+           badges.push(
+              <span key="booked" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>
+                  Gebucht
+              </span>
+          );
+      }
+
+      if (isClosed) {
+           badges.push(
+              <span key="closed" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>
+                  Geschlossen
+              </span>
+          );
+      }
+
+      // Fallback
+      if (badges.length === 0) {
+           badges.push(
+              <span key="generic" className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusColors(effectiveStatus)}`}>
+                  {effectiveStatus}
+              </span>
+          );
+      }
+
+      return <div className="flex flex-wrap items-center gap-2">{badges}</div>;
   };
 
   // Helper to parse notes and flags
@@ -594,21 +700,16 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
       <div className="space-y-6 animate-in fade-in duration-300">
         <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
           <h2 className="text-2xl font-bold">Wareneingang Verwaltung</h2>
-          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl overflow-x-auto no-scrollbar max-w-full">
-            {(['all', 'open', 'booked'] as const).map(f => (
-              <button
-                key={f}
-                onClick={() => setStatusFilter(f)}
-                className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
-                  statusFilter === f 
-                    ? 'bg-white dark:bg-slate-700 shadow-sm text-[#0077B5]' 
-                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                }`}
-              >
-                {f === 'all' ? 'Alle' : f === 'open' ? 'Offen' : 'Gebucht'}
-              </button>
-            ))}
-          </div>
+          <button
+            onClick={() => onNavigate('goods-receipt')}
+            className={`px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg ${
+                isDark 
+                 ? 'bg-[#0077B5] hover:bg-[#00A0DC] text-white shadow-blue-500/20' 
+                 : 'bg-[#0077B5] hover:bg-[#00A0DC] text-white shadow-blue-500/20'
+            }`}
+          >
+            <ClipboardCheck size={20} /> Lieferung prüfen
+          </button>
         </div>
 
         <div className="flex flex-col gap-4">
@@ -627,6 +728,23 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                 }`}
               />
             </div>
+            
+            <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl overflow-x-auto no-scrollbar max-w-full">
+                {(['all', 'open', 'booked'] as const).map(f => (
+                <button
+                    key={f}
+                    onClick={() => setStatusFilter(f)}
+                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+                    statusFilter === f 
+                        ? 'bg-white dark:bg-slate-700 shadow-sm text-[#0077B5]' 
+                        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                    }`}
+                >
+                    {f === 'all' ? 'Alle' : f === 'open' ? 'Offen' : 'Gebucht'}
+                </button>
+                ))}
+            </div>
+
             <button 
               onClick={() => setShowFilters(!showFilters)}
               className={`px-4 py-3 md:py-0 rounded-xl border flex items-center justify-center gap-2 font-bold transition-all ${
@@ -696,7 +814,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                <tbody className="divide-y divide-slate-500/10">
                   {filteredRows.map(row => {
                     const linkedPO = purchaseOrders.find(po => po.id === row.bestellNr);
-                    const displayStatus = row.masterStatus || row.status;
+                    const linkedMaster = receiptMasters.find(m => m.poId === row.bestellNr);
                     const deliveryCount = row.deliveryCount || 1;
 
                     return (
@@ -706,20 +824,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                       className={`cursor-pointer transition-colors ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-50'}`}
                     >
                       <td className="p-4">
-                        <div className="flex flex-wrap gap-2 items-center">
-                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${statusColors(displayStatus)}`}>
-                              {displayStatus}
-                            </span>
-                            {linkedPO?.status === 'Projekt' && (
-                                <span className={`px-2.5 py-1 rounded-full text-xs font-bold border flex items-center gap-1.5 ${
-                                    isDark 
-                                    ? 'bg-blue-900/30 text-blue-400 border-blue-800' 
-                                    : 'bg-blue-100 text-blue-700 border-blue-200'
-                                }`}>
-                                    <Briefcase size={12} /> Projekt
-                                </span>
-                            )}
-                        </div>
+                        {renderReceiptBadges(row, linkedPO, linkedMaster)}
                       </td>
                       <td className="p-4 font-medium text-slate-600 dark:text-slate-400">
                           {row.isGroup ? (
@@ -787,10 +892,10 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                 <ArrowLeft size={16} /> Zurück zur Übersicht
             </button>
             <div className="flex items-center gap-3 ml-auto">
-               <div className={`px-4 py-1.5 rounded-full border flex items-center gap-2 shadow-sm ${getBadgeStyles(selectedHeader.status)}`}>
-                   <span className="text-sm font-bold uppercase tracking-wider">{selectedHeader.status}</span>
-                   <span className="w-2 h-2 rounded-full bg-current animate-pulse shadow-[0_0_8px_currentColor]" />
+               <div className="flex flex-wrap items-center gap-2">
+                   {renderReceiptBadges(selectedHeader, linkedPO, linkedMaster)}
                </div>
+               
                {selectedHeader.status !== 'Abgeschlossen' && (
                   <>
                     <div className="h-6 w-px bg-slate-500/20 mx-1"></div>
@@ -844,11 +949,16 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                                   <button onClick={() => setShowDeliveryList(false)} className="hover:bg-red-500/10 hover:text-red-500 p-1 rounded transition-colors"><X size={14}/></button>
                               </div>
                               <div className="max-h-64 overflow-y-auto">
-                                  {linkedMaster?.deliveries.map((del, idx) => (
-                                      <div key={del.id} className={`p-3 border-b last:border-0 flex items-center gap-3 ${
+                                  {linkedMaster?.deliveries
+                                    .filter(d => d.lieferscheinNr && d.lieferscheinNr !== 'Ausstehend' && d.lieferscheinNr !== 'Pending')
+                                    .map((del, idx) => (
+                                      <button 
+                                        key={del.id} 
+                                        onClick={() => handleScrollToDelivery(del.id)}
+                                        className={`w-full text-left p-3 border-b last:border-0 flex items-center gap-3 transition-colors ${
                                           del.lieferscheinNr === selectedHeader.lieferscheinNr 
-                                              ? (isDark ? 'bg-[#0077B5]/10' : 'bg-[#0077B5]/5') 
-                                              : ''
+                                              ? (isDark ? 'bg-[#0077B5]/10 hover:bg-[#0077B5]/20' : 'bg-[#0077B5]/5 hover:bg-[#0077B5]/10') 
+                                              : (isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-50')
                                       }`}>
                                           <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
                                                del.lieferscheinNr === selectedHeader.lieferscheinNr 
@@ -869,9 +979,9 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                                                   {new Date(del.date).toLocaleDateString()} • {del.items.length} Pos.
                                               </div>
                                           </div>
-                                      </div>
+                                      </button>
                                   ))}
-                                  {(!linkedMaster || linkedMaster.deliveries.length === 0) && (
+                                  {(!linkedMaster || linkedMaster.deliveries.filter(d => d.lieferscheinNr && d.lieferscheinNr !== 'Ausstehend' && d.lieferscheinNr !== 'Pending').length === 0) && (
                                        <div className="p-4 text-center text-xs opacity-50">Keine weiteren Lieferungen gefunden.</div>
                                   )}
                               </div>
@@ -1030,6 +1140,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
 
                                         return (
                                             <div 
+                                                id={`delivery-${delivery.id}`}
                                                 key={delivery.id} 
                                                 className={`rounded-xl border transition-all duration-300 overflow-hidden ${
                                                     isCurrent 

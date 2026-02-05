@@ -1,12 +1,12 @@
 
 import React, { useRef } from 'react';
-import { Theme, StockItem, RawGermanItem } from '../types';
-import { Book, ChevronRight, Moon, Sun, Monitor, Shield, Info, Upload, Trash2, Database, AlertCircle, CheckCircle2, Users, Sidebar, LayoutPanelLeft, List, LayoutGrid } from 'lucide-react';
+import { Theme, StockItem, RawGermanItem, ActiveModule } from '../types';
+import { Book, ChevronRight, Moon, Sun, Monitor, Shield, Info, Upload, Trash2, Database, AlertCircle, CheckCircle2, Users, Sidebar, LayoutPanelLeft, List, LayoutGrid, Bug } from 'lucide-react';
 
 interface SettingsPageProps {
   theme: Theme;
   toggleTheme: () => void;
-  onNavigate: (module: 'documentation') => void;
+  onNavigate: (module: ActiveModule) => void;
   onUploadData: (data: StockItem[]) => void;
   onClearData: () => void;
   hasCustomData: boolean;
@@ -260,6 +260,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           />
         </button>
 
+        <button 
+          onClick={() => onNavigate('debug')}
+          className={`w-full text-left transition-colors ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}
+        >
+          <SettingRow 
+            icon={<Bug size={20} />}
+            label="System-Logik prüfen (Debug)"
+            description="Developer Tools & Status-Logik Debugger"
+            action={<ChevronRight size={18} className="text-slate-500" />}
+          />
+        </button>
+
         <SettingRow 
           icon={<Info size={20} />}
           label="Version"
@@ -268,7 +280,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         />
       </div>
 
-      {/* CREDITS SECTION (NEW) */}
+      {/* CREDITS SECTION */}
       <div className={`rounded-2xl border overflow-hidden mb-8 ${isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}>
         <div className={`px-6 py-3 border-b flex flex-col justify-center ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
           <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>

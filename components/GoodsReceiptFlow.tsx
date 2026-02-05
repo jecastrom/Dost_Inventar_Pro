@@ -226,7 +226,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     bestellNr: '', 
     lieferdatum: new Date().toISOString().split('T')[0],
     lieferant: '',
-    status: 'In Bearbeitung', // Will be calculated in Step 3
+    status: 'In Bearbeitung', // Will be calculated dynamically
     warehouseLocation: '' // Global Location
   });
 
@@ -278,78 +278,79 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
   // -- State: Submission Status --
   const [submissionStatus, setSubmissionStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
 
-  // -- AUTO-CALCULATE STATUS WHEN ENTERING STEP 3 --
+  // --- HELPER: CALCULATE FINAL STATUS ---
+  const calculateReceiptStatus = (currentCart: CartItem[], poId: string | null) => {
+      // 1. REJECTION CHECK (Priority 1)
+      const allRejected = currentCart.length > 0 && currentCart.every(c => c.isRejected);
+      if (allRejected) return 'Abgelehnt';
+
+      const hasDamage = currentCart.some(c => c.isDamaged);
+      const hasWrong = currentCart.some(c => c.isWrongItem);
+      const hasPartialRejection = currentCart.some(c => c.isRejected);
+
+      // 2. ISSUES (Priority 2)
+      if (hasDamage && hasWrong) return 'Schaden + Falsch';
+      if (hasDamage) return 'Schaden';
+      if (hasWrong) return 'Falsch geliefert';
+      
+      // 3. QUANTITY & LOGIC (Priority 3)
+      if (poId) {
+          const linkedMaster = receiptMasters.find(m => m.poId === poId);
+          const currentPo = purchaseOrders?.find(p => p.id === poId);
+          
+          if (currentPo) {
+              let allItemsComplete = true;
+              let anyOverDelivery = false;
+              let anyOpen = false;
+              
+              for (const poItem of currentPo.items) {
+                  // Calculate historical + current
+                  let historyQty = 0;
+                  if (linkedMaster) {
+                      linkedMaster.deliveries.forEach(del => {
+                          const dItem = del.items.find(di => di.sku === poItem.sku);
+                          if (dItem) historyQty += dItem.receivedQty;
+                      });
+                  }
+
+                  const cartItem = currentCart.find(c => c.item.sku === poItem.sku);
+                  let currentQty = 0;
+                  if (cartItem && !cartItem.isRejected) {
+                      if (cartItem.qty > (cartItem.orderedQty || 0) && cartItem.overDeliveryResolution === 'return') {
+                          currentQty = cartItem.orderedQty || 0; // Return means we don't keep the overage
+                      } else {
+                          currentQty = cartItem.qty;
+                      }
+                  }
+
+                  const totalReceived = historyQty + currentQty;
+
+                  if (totalReceived < poItem.quantityExpected) {
+                      allItemsComplete = false;
+                      anyOpen = true;
+                  }
+                  if (totalReceived > poItem.quantityExpected) {
+                      anyOverDelivery = true;
+                  }
+              }
+
+              if (anyOverDelivery) return 'Übermenge';
+              if (!allItemsComplete || hasPartialRejection) return 'Teillieferung';
+              // If we are here: All items complete, no issues, no rejection.
+              return 'Gebucht';
+          }
+      } else {
+          // No PO linked
+          if (hasPartialRejection) return 'Teillieferung'; // Or similar status
+          return 'Gebucht';
+      }
+      return 'Gebucht';
+  };
+
+  // -- EFFECT: SUGGEST STATUS IN UI --
   useEffect(() => {
     if (step === 3) {
-        let suggested = 'Gebucht';
-
-        // 1. REJECTION CHECK (Priority 4 logic for FULL rejection, but checked early for override)
-        // If ALL items are rejected, status is 'Abgelehnt'
-        const allRejected = cart.length > 0 && cart.every(c => c.isRejected);
-        
-        if (allRejected) {
-             suggested = 'Abgelehnt';
-        } else {
-             // 2. PRIORITY LOGIC
-             const hasDamage = cart.some(c => c.isDamaged);
-             const hasWrong = cart.some(c => c.isWrongItem);
-
-             if (hasDamage && hasWrong) {
-                 suggested = 'Schaden + Falsch'; // Priority 2
-             } else if (hasDamage) {
-                 suggested = 'Schaden'; // Priority 1
-             } else if (hasWrong) {
-                 suggested = 'Falsch geliefert'; // Priority 3
-             } else if (cart.some(c => c.isRejected)) {
-                 // If not all rejected but some are, usually implies Teillieferung or issues
-                 suggested = 'Teillieferung'; // Priority 5 partial/issues
-             } else if (linkedPoId) {
-                // MULTI-DELIVERY / QTY LOGIC (Priority 5)
-                const linkedMaster = receiptMasters.find(m => m.poId === linkedPoId);
-                const currentPo = purchaseOrders?.find(p => p.id === linkedPoId);
-                
-                if (currentPo) {
-                    let allItemsComplete = true;
-                    let anyOverDelivery = false;
-                    
-                    for (const poItem of currentPo.items) {
-                        let historyQty = 0;
-                        if (linkedMaster) {
-                            linkedMaster.deliveries.forEach(del => {
-                                const dItem = del.items.find(di => di.sku === poItem.sku);
-                                if (dItem) historyQty += dItem.receivedQty;
-                            });
-                        }
-
-                        const cartItem = cart.find(c => c.item.sku === poItem.sku);
-                        let currentQty = 0;
-                        if (cartItem && !cartItem.isRejected) {
-                            if (cartItem.qty > (cartItem.orderedQty || 0) && cartItem.overDeliveryResolution === 'return') {
-                                currentQty = cartItem.orderedQty || 0;
-                            } else {
-                                currentQty = cartItem.qty;
-                            }
-                        }
-
-                        const totalReceived = historyQty + currentQty;
-
-                        if (totalReceived < poItem.quantityExpected) {
-                            allItemsComplete = false;
-                        }
-                        if (totalReceived > poItem.quantityExpected) {
-                            anyOverDelivery = true;
-                        }
-                    }
-
-                    if (anyOverDelivery) suggested = 'Übermenge';
-                    else if (!allItemsComplete) suggested = 'Teillieferung';
-                    else suggested = 'Gebucht'; // All complete & no issues
-                }
-             } else {
-                 suggested = 'Gebucht';
-             }
-        }
-        
+        const suggested = calculateReceiptStatus(cart, linkedPoId);
         setHeaderData(prev => ({ ...prev, status: suggested }));
     }
   }, [step, cart, linkedPoId, receiptMasters, purchaseOrders]);
@@ -575,8 +576,13 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
   // -- SUBMISSION HANDLERS --
   const handleSubmit = async () => {
     if (!headerData.lieferscheinNr || !headerData.lieferant || cart.length === 0) return;
+    
+    // Explicitly recalculate status to ensure it's not stale or default
+    const currentStatus = calculateReceiptStatus(cart, linkedPoId);
+    setFinalResultStatus(currentStatus);
+    
     setSubmissionStatus('submitting');
-    setFinalResultStatus(headerData.status);
+    
     try {
         await new Promise(resolve => setTimeout(resolve, 600));
         setSubmissionStatus('success');
@@ -653,6 +659,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
       .map(c => c.item)
       .filter(item => !existingItems.find(ex => ex.id === item.id));
 
+    // Ensure status is passed correctly to parent
     const finalHeader = { ...headerData, status: finalResultStatus };
     
     // Call onSuccess which triggers navigation in parent App.tsx
