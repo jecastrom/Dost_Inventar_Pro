@@ -240,6 +240,8 @@ export default function App() {
             items: po.items.map(i => ({
                 sku: i.sku,
                 receivedQty: 0,
+                quantityAccepted: 0,
+                quantityRejected: 0,
                 damageFlag: false,
                 manualAddFlag: false,
                 orderedQty: i.quantityExpected,
@@ -291,18 +293,21 @@ export default function App() {
       setInventory(prev => [...prev, ...newItemsCreated]);
     }
 
+    // --- 1. UPDATE STOCK INVENTORY (ACCEPTED QTY ONLY) ---
+    // Note: qtyAccepted can be negative for corrections, which correctly reduces stock.
     setInventory(prev => {
       const copy = [...prev];
       cartItems.forEach(cartItem => {
-         // REMOVED LOGGING HERE (Fix for double logging bug)
-         // Logging is now handled exclusively inside GoodsReceiptFlow via onLogStock prop
+         // Logging handled by GoodsReceiptFlow via onLogStock prop
 
          if (!isProject) {
              const idx = copy.findIndex(i => i.id === cartItem.item.id);
              if (idx >= 0) {
+               // Use quantityAccepted if available, fallback to qty (legacy safety)
+               const qtyToAdd = cartItem.qtyAccepted ?? cartItem.qty; 
                copy[idx] = { 
                  ...copy[idx], 
-                 stockLevel: copy[idx].stockLevel + cartItem.qty,
+                 stockLevel: copy[idx].stockLevel + qtyToAdd,
                  lastUpdated: timestamp,
                  warehouseLocation: cartItem.location 
                };
@@ -312,29 +317,9 @@ export default function App() {
       return copy;
     });
 
-    const newHeader: ReceiptHeader = {
-      ...headerData,
-      batchId,
-      timestamp,
-      itemCount: cartItems.length,
-      createdByName: 'Admin User'
-    };
-    setReceiptHeaders(prev => [newHeader, ...prev]);
-
-    const newReceiptItems: ReceiptItem[] = cartItems.map((c, idx) => ({
-      id: `ri-${batchId}-${idx}`,
-      batchId,
-      sku: c.item.sku,
-      name: c.item.name,
-      quantity: c.qty,
-      targetLocation: c.location,
-      isDamaged: c.isDamaged,
-      issueNotes: c.issueNotes
-    }));
-    setReceiptItems(prev => [...prev, ...newReceiptItems]);
-
-    // Ticket Creation Logic has been moved to GoodsReceiptFlow.handleFinalize 
-    // to allow consolidation into a single ticket per receipt.
+    // --- 2. UPDATE PO STATUS & RECEIPT MASTER (HISTORY) ---
+    // We calculate the final receipt status here to catch Overdeliveries (Übermenge) across the whole PO.
+    let finalReceiptStatus = headerData.status;
 
     if (headerData.bestellNr) {
         const poId = headerData.bestellNr;
@@ -342,17 +327,34 @@ export default function App() {
 
         setPurchaseOrders(prev => prev.map(po => {
             if (po.id !== poId) return po;
+            
             const updatedItems = po.items.map(pItem => {
                 const receivedLine = cartItems.find(c => c.item.sku === pItem.sku);
                 if (receivedLine) {
-                    return { ...pItem, quantityReceived: pItem.quantityReceived + receivedLine.qty };
+                    // CRITICAL: Only increase PO quantity by what was ACCEPTED.
+                    // Rejected items are NOT counted as "Received" for PO completeness.
+                    // This can be negative if correcting a previous overdelivery.
+                    const qtyToAdd = receivedLine.qtyAccepted ?? receivedLine.qty;
+                    return { ...pItem, quantityReceived: Math.max(0, pItem.quantityReceived + qtyToAdd) };
                 }
                 return pItem;
             });
+
+            // Logic Checks
             const allReceived = updatedItems.every(i => i.quantityReceived >= i.quantityExpected);
             const partiallyReceived = updatedItems.some(i => i.quantityReceived > 0);
             
+            // STATUS OVERRIDE: Check for Overdelivery (Übermenge)
+            // If any item has more received than expected, we flag the RECEIPT as 'Übermenge' 
+            // (if it wasn't already flagged as something more critical like 'Abgelehnt' or 'Schaden')
+            const anyOver = updatedItems.some(i => i.quantityReceived > i.quantityExpected);
+            if (anyOver && !['Abgelehnt', 'Schaden', 'Schaden + Falsch', 'Falsch geliefert'].includes(finalReceiptStatus)) {
+                finalReceiptStatus = 'Übermenge';
+            }
+
             // GUARD CLAUSE: Protect Identity Statuses (Projekt/Lager)
+            // The PO itself stays 'Abgeschlossen' if overdelivered (>= expected), 
+            // but the Receipt will show 'Übermenge' to warn the user.
             let nextStatus = po.status;
             if (po.status !== 'Projekt' && po.status !== 'Lager') {
                 nextStatus = allReceived ? 'Abgeschlossen' : partiallyReceived ? 'Teilweise geliefert' : 'Offen';
@@ -366,6 +368,7 @@ export default function App() {
             };
         }));
 
+        // --- 3. CREATE RECEIPT MASTER & DELIVERY LOG ---
         setReceiptMasters(prev => {
             const existingMaster = prev.find(m => m.poId === poId);
             const newDeliveryLog: DeliveryLog = {
@@ -376,15 +379,25 @@ export default function App() {
                     const poItem = currentPO?.items.find(pi => pi.sku === c.item.sku);
                     const ordered = poItem ? poItem.quantityExpected : 0;
                     const previous = poItem ? poItem.quantityReceived : 0;
-                    const current = c.qty;
-                    const total = previous + current;
                     
-                    const offen = Math.max(0, ordered - total);
-                    const zuViel = Math.max(0, total - ordered);
+                    // Stats for Snapshot
+                    const currentAccepted = c.qtyAccepted ?? c.qty;
+                    const totalAccepted = previous + currentAccepted;
+                    
+                    const offen = Math.max(0, ordered - totalAccepted);
+                    const zuViel = Math.max(0, totalAccepted - ordered);
 
                     return {
                         sku: c.item.sku,
-                        receivedQty: current,
+                        receivedQty: c.qtyReceived, // Total Physical Count
+                        quantityAccepted: c.qtyAccepted, // Good Stock
+                        quantityRejected: c.qtyRejected, // Returned/Bad
+                        
+                        // New Logistics Fields
+                        rejectionReason: c.rejectionReason,
+                        returnCarrier: c.returnCarrier,
+                        returnTrackingId: c.returnTrackingId,
+                        
                         damageFlag: !!c.isDamaged || !!c.issueNotes,
                         manualAddFlag: !c.orderedQty,
                         orderedQty: ordered,
@@ -398,19 +411,42 @@ export default function App() {
             if (existingMaster) {
                 return prev.map(m => m.id === existingMaster.id ? { 
                     ...m,
-                    status: headerData.status as any, // CRITICAL: Update master status to match delivery result (e.g. "Gebucht")
+                    status: finalReceiptStatus as any, // Update master status to 'Übermenge' if detected
                     deliveries: [...m.deliveries, newDeliveryLog] 
                 } : m);
             } else {
                 return [...prev, {
                     id: crypto.randomUUID(),
                     poId,
-                    status: headerData.status as any,
+                    status: finalReceiptStatus as any,
                     deliveries: [newDeliveryLog]
                 }];
             }
         });
     }
+
+    // --- 4. CREATE RECEIPT HEADER & ITEMS ---
+    const newHeader: ReceiptHeader = {
+      ...headerData,
+      status: finalReceiptStatus, // Persist the calculated status
+      batchId,
+      timestamp,
+      itemCount: cartItems.length,
+      createdByName: 'Admin User'
+    };
+    setReceiptHeaders(prev => [newHeader, ...prev]);
+
+    const newReceiptItems: ReceiptItem[] = cartItems.map((c, idx) => ({
+      id: `ri-${batchId}-${idx}`,
+      batchId,
+      sku: c.item.sku,
+      name: c.item.name,
+      quantity: c.qtyAccepted ?? c.qty, // Record only what was accepted into stock for the simple view
+      targetLocation: c.location,
+      isDamaged: c.isDamaged,
+      issueNotes: c.issueNotes
+    }));
+    setReceiptItems(prev => [...prev, ...newReceiptItems]);
 
     handleNavigation('receipt-management');
   };

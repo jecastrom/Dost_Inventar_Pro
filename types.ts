@@ -101,9 +101,21 @@ export interface PurchaseOrder {
 
 export interface DeliveryLogItem {
   sku: string;
-  receivedQty: number;
+  receivedQty: number; // Total physical count (Accepted + Rejected)
+  
+  // Split-Math (New Logistics)
+  quantityAccepted: number; // Good / Stock
+  quantityRejected: number; // Bad / Returned / Quarantined
+  
+  // Return Logistics
+  rejectionReason?: 'Damaged' | 'Wrong' | 'Overdelivery' | 'Other';
+  returnCarrier?: string;
+  returnTrackingId?: string;
+
+  // Legacy / Flags (Kept for backward compatibility)
   damageFlag: boolean;
   manualAddFlag: boolean;
+  
   // Snapshot Fields (History Correction)
   orderedQty?: number;
   previousReceived?: number;
@@ -164,6 +176,7 @@ export interface StockLog {
   warehouse: string;
   source?: string;
   context?: 'normal' | 'project' | 'manual' | 'po-normal' | 'po-project';
+  rejectionInfo?: string; // New: Reason/Context for rejection if applicable
 }
 
 // --- Data Import Types (Legacy System Support) ---

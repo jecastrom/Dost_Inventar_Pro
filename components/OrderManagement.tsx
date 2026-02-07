@@ -15,7 +15,12 @@ const isOrderComplete = (order: PurchaseOrder) => {
     if (order.status === 'Storniert') return true;
     const totalOrdered = order.items.reduce((sum, i) => sum + i.quantityExpected, 0);
     const totalReceived = order.items.reduce((sum, i) => sum + i.quantityReceived, 0);
-    return totalOrdered > 0 && totalReceived >= totalOrdered;
+    
+    // STRICT EQUALITY CHECK:
+    // If Received < Ordered: Partial -> Active (False)
+    // If Received > Ordered: Overdelivery -> Active (False) - Needs correction/return
+    // If Received == Ordered: Perfect -> Complete (True)
+    return totalOrdered > 0 && totalReceived === totalOrdered;
 };
 
 // --- HELPER: DERIVED STATUS FOR STEPPER VISUALS ---
@@ -25,7 +30,7 @@ const getVisualLifecycleStatus = (order: PurchaseOrder) => {
     if (isOrderComplete(order)) return 'Abgeschlossen';
     
     const totalReceived = order.items.reduce((sum, i) => sum + i.quantityReceived, 0);
-    if (totalReceived > 0) return 'Teillieferung';
+    if (totalReceived > 0) return 'Teillieferung'; // Handles both Partial and Overdelivery for visual stepper
     
     return 'Offen'; 
 };
@@ -87,12 +92,20 @@ const OrderStatusBadges = ({ order, linkedReceipt, theme }: { order: PurchaseOrd
                 Teillieferung
             </span>
         );
-    } else if (totalReceived >= totalOrdered) {
+    } else if (totalReceived === totalOrdered) {
         badges.push(
             <span key="life-done" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
                 isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-50 text-emerald-600 border-emerald-200'
             }`}>
                 Erledigt
+            </span>
+        );
+    } else if (totalReceived > totalOrdered) {
+        badges.push(
+            <span key="life-over" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
+                isDark ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' : 'bg-orange-50 text-orange-600 border-orange-200'
+            }`}>
+                Übermenge
             </span>
         );
     }
@@ -566,9 +579,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                                     </td>
                                     <td className="px-6 py-4 text-center">
                                         <span className={`font-bold ${
-                                            item.quantityReceived >= item.quantityExpected 
+                                            item.quantityReceived === item.quantityExpected 
                                                 ? 'text-emerald-500' 
-                                                : item.quantityReceived > 0 ? 'text-red-500' : 'text-slate-400'
+                                                : item.quantityReceived > item.quantityExpected
+                                                    ? 'text-orange-500'
+                                                    : item.quantityReceived > 0 ? 'text-amber-500' : 'text-slate-400'
                                         }`}>
                                             {item.quantityReceived}
                                         </span>

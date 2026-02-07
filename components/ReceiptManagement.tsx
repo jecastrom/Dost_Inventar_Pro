@@ -6,7 +6,7 @@ import {
   AlertCircle, CheckCircle2, ChevronDown, ChevronUp, FileText, Truck,
   BarChart3, Ban, Archive, Briefcase, Info, PackagePlus,
   AlertTriangle, Layers, XCircle, ClipboardCheck,
-  Undo2, MessageSquare, AlertOctagon, Box
+  Undo2, MessageSquare, AlertOctagon, Box, Lock
 } from 'lucide-react';
 import { ReceiptHeader, ReceiptItem, Theme, ReceiptComment, Ticket, PurchaseOrder, ReceiptMaster, DeliveryLog, ActiveModule } from '../types';
 import { TicketSystem } from './TicketSystem';
@@ -31,10 +31,10 @@ const ReceiptStatusBadges = ({
     // Determine effective status: Master takes precedence over Header (for grouped rows)
     const effectiveStatus = master ? master.status : header.status;
 
-    // --- BADGE 1: SOURCE IDENTITY (ETERNAL) ---
+    // --- BADGE 1: IDENTITY (SOURCE) ---
+    // Rule: IF linkedPO?.status === 'Projekt' -> [PROJEKT]
+    //       ELSE -> [LAGER]
     const isProject = linkedPO?.status === 'Projekt' || (header.bestellNr && header.bestellNr.toLowerCase().includes('projekt'));
-    // Explicit 'Lager' check or default fallback if PO exists but isn't project
-    const isLager = linkedPO?.status === 'Lager' || (linkedPO && !isProject);
 
     if (isProject) {
         badges.push(
@@ -42,7 +42,7 @@ const ReceiptStatusBadges = ({
                 <Briefcase size={10} /> Projekt
             </span>
         );
-    } else if (isLager) {
+    } else {
         badges.push(
             <span key="id-lager" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 uppercase tracking-wider ${isDark ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                 <Box size={10} /> Lager
@@ -50,47 +50,31 @@ const ReceiptStatusBadges = ({
         );
     }
 
-    // --- BADGE 2: TICKET OVERLAY (HIGH PRIORITY) ---
-    const openTickets = tickets.filter(t => t.status === 'Open').length;
-    const closedTickets = tickets.filter(t => t.status === 'Closed').length;
-
-    if (openTickets > 0) {
-        badges.push(
-            <span key="ticket-open" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 uppercase tracking-wider animate-pulse ${isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-50 text-red-600 border-red-200'}`}>
-                <AlertOctagon size={10} /> Reklamation
-            </span>
-        );
-    } else if (closedTickets > 0) {
-        badges.push(
-            <span key="ticket-solved" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 uppercase tracking-wider ${isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-50 text-emerald-600 border-emerald-200'}`}>
-                <CheckCircle2 size={10} /> Fall gelöst
-            </span>
-        );
-    }
-
-    // --- BADGE 3: STATUS STATE (LIFECYCLE) ---
-    if (effectiveStatus === 'In Prüfung' || effectiveStatus === 'Wartet auf Prüfung' || header.lieferscheinNr === 'Ausstehend') {
-        badges.push(
-            <span key="st-check" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider whitespace-nowrap ${isDark ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20'}`}>
-                In Prüfung
-            </span>
-        );
-    } else if (effectiveStatus === 'Gebucht' || effectiveStatus === 'Abgeschlossen') {
+    // --- BADGE 2: THE STATUS (MANDATORY) ---
+    // Maps the 'effectiveStatus' string to a colored badge.
+    
+    if (effectiveStatus === 'Gebucht' || effectiveStatus === 'Abgeschlossen') {
         badges.push(
             <span key="st-booked" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-50 text-emerald-600 border-emerald-200'}`}>
                 Gebucht
             </span>
         );
-    } else if (effectiveStatus === 'Abgelehnt') {
+    } else if (effectiveStatus === 'In Prüfung' || effectiveStatus === 'Wartet auf Prüfung' || header.lieferscheinNr === 'Ausstehend') {
         badges.push(
-            <span key="st-rejected" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-50 text-red-600 border-red-200'}`}>
-                Abgelehnt
+            <span key="st-check" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider whitespace-nowrap ${isDark ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20'}`}>
+                In Prüfung
             </span>
         );
     } else if (effectiveStatus === 'Schaden' || effectiveStatus === 'Beschädigt' || effectiveStatus.includes('Schaden')) {
         badges.push(
             <span key="st-damage" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-50 text-red-600 border-red-200'}`}>
                 Schaden
+            </span>
+        );
+    } else if (effectiveStatus === 'Abgelehnt') {
+        badges.push(
+            <span key="st-rejected" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                Abgelehnt
             </span>
         );
     } else if (effectiveStatus === 'Teillieferung' || effectiveStatus.includes('Teil')) {
@@ -112,7 +96,7 @@ const ReceiptStatusBadges = ({
             </span>
         );
     } else {
-        // Fallback
+        // Fallback for unknown statuses
         badges.push(
             <span key="st-generic" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${isDark ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
                 {effectiveStatus}
@@ -120,7 +104,25 @@ const ReceiptStatusBadges = ({
         );
     }
 
-    return <div className="flex flex-wrap items-center gap-1.5">{badges}</div>;
+    // --- BADGE 3: TICKETS (ISSUES) ---
+    const openTickets = tickets.filter(t => t.status === 'Open').length;
+    const closedTickets = tickets.filter(t => t.status === 'Closed').length;
+
+    if (openTickets > 0) {
+        badges.push(
+            <span key="ticket-open" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 uppercase tracking-wider animate-pulse ${isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                <AlertOctagon size={10} /> Reklamation
+            </span>
+        );
+    } else if (closedTickets > 0) {
+        badges.push(
+            <span key="ticket-solved" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 uppercase tracking-wider ${isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-50 text-emerald-600 border-emerald-200'}`}>
+                <CheckCircle2 size={10} /> Fall gelöst
+            </span>
+        );
+    }
+
+    return <div className="flex flex-wrap items-center gap-2">{badges}</div>;
 };
 
 // --- HELPER: INSPECTION STATE LOGIC ---

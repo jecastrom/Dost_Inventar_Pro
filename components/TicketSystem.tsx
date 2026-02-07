@@ -479,7 +479,7 @@ export const TicketSystem: React.FC<TicketSystemProps> = ({
 
                         {/* Chat Messages */}
                         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                            {Object.entries(groupedMessages).map(([dateKey, messages]) => {
+                            {(Object.entries(groupedMessages) as [string, TicketMessage[]][]).map(([dateKey, messages]) => {
                                 const isCollapsed = collapsedDates.has(dateKey);
                                 
                                 return (
