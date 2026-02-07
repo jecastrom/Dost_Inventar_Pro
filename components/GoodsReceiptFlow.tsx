@@ -6,7 +6,7 @@ import {
   Hash, Info, CheckCircle2, AlertCircle, ChevronDown, Check,
   ArrowRight, ArrowLeft, Trash2, MapPin, FileText, Building2,
   AlertTriangle, Loader2, Home, ClipboardList, CheckSquare, MessageSquare, Briefcase, Ban, ListFilter,
-  LogOut, PlusCircle, XCircle, Clock
+  LogOut, PlusCircle, XCircle, Clock, Box
 } from 'lucide-react';
 import { StockItem, Theme, ReceiptHeader, PurchaseOrder, ReceiptMaster, Ticket } from '../types';
 import { MOCK_PURCHASE_ORDERS } from '../data';
@@ -92,15 +92,6 @@ const POSelectionModal = ({
     o.supplier.toLowerCase().includes(term.toLowerCase())
   );
 
-  const getStatusStyle = (status: string) => {
-    switch (status) {
-      case 'Offen': return isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200';
-      case 'Teilweise geliefert': return isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-100 text-amber-700 border-amber-200';
-      case 'Projekt': return isDark ? 'bg-blue-900/30 text-blue-400 border-blue-900' : 'bg-blue-100 text-blue-700 border-blue-200';
-      default: return isDark ? 'bg-slate-800 text-slate-400' : 'bg-slate-100 text-slate-500';
-    }
-  };
-
   return createPortal(
     <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4">
        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose} />
@@ -124,13 +115,32 @@ const POSelectionModal = ({
           {/* List */}
           <div className="overflow-y-auto p-4 space-y-3 bg-slate-50 dark:bg-slate-950/50 flex-1">
              {filtered.length === 0 && (
-                <div className="text-center py-10 text-slate-500">Keine Bestellungen gefunden.</div>
+                <div className="text-center py-10 text-slate-500">Keine offenen Bestellungen gefunden.</div>
              )}
              {filtered.map(po => {
-                // Status Logic
-                const linkedReceipt = receiptMasters.find(r => r.poId === po.id);
-                const isInCheck = linkedReceipt && linkedReceipt.status === 'Offen';
-                const label = po.status === 'Teilweise geliefert' ? 'Teillieferung' : po.status;
+                // 1. Math Calculation (Source of Truth)
+                const totalOrdered = po.items.reduce((sum, i) => sum + i.quantityExpected, 0);
+                const linkedMaster = receiptMasters.find(r => r.poId === po.id);
+                
+                let totalReceived = 0;
+                if (linkedMaster) {
+                    linkedMaster.deliveries.forEach(d => {
+                        d.items.forEach(i => {
+                            // Only count quantity if the item is part of the original order
+                            if (po.items.some(pi => pi.sku === i.sku)) {
+                                totalReceived += i.receivedQty;
+                            }
+                        });
+                    });
+                } else {
+                    totalReceived = po.items.reduce((sum, i) => sum + i.quantityReceived, 0);
+                }
+
+                // 2. Identity Check
+                const isProject = po.status === 'Projekt' || po.id.toLowerCase().includes('projekt');
+
+                // 3. Inspection Check
+                const isInCheck = linkedMaster && (linkedMaster.status === 'In Prüfung' || linkedMaster.status === 'Wartet auf Prüfung');
 
                 return (
                    <button
@@ -145,17 +155,39 @@ const POSelectionModal = ({
                       <div className="flex justify-between items-start mb-2">
                           <div className="flex items-center gap-3">
                               <span className={`font-mono font-bold text-lg ${isDark ? 'text-white' : 'text-slate-900'}`}>{po.id}</span>
+                              
                               {/* BADGES ROW */}
                               <div className="flex gap-2">
-                                  {po.status === 'Projekt' ? (
-                                      <>
-                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${getStatusStyle('Offen')}`}>Offen</span>
-                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${getStatusStyle('Projekt')}`}>Projekt</span>
-                                      </>
+                                  
+                                  {/* BADGE 1: IDENTITY */}
+                                  {isProject ? (
+                                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider flex items-center gap-1 ${isDark ? 'bg-blue-900/30 text-blue-400 border-blue-900' : 'bg-blue-100 text-blue-700 border-blue-200'}`}>
+                                          <Briefcase size={10} /> Projekt
+                                      </span>
                                   ) : (
-                                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${getStatusStyle(po.status)}`}>{label}</span>
+                                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider flex items-center gap-1 ${isDark ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                                          <Box size={10} /> Lager
+                                      </span>
+                                  )}
+
+                                  {/* BADGE 2: PROGRESS (MATH) */}
+                                  {totalReceived === 0 && (
+                                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${isDark ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                                          Offen
+                                      </span>
+                                  )}
+                                  {totalReceived > 0 && totalReceived < totalOrdered && (
+                                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
+                                          Teillieferung
+                                      </span>
+                                  )}
+                                  {totalReceived >= totalOrdered && totalOrdered > 0 && (
+                                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200'}`}>
+                                          Erledigt
+                                      </span>
                                   )}
                                   
+                                  {/* BADGE 3: INSPECTION */}
                                   {isInCheck && (
                                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${isDark ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20'}`}>
                                           In Prüfung
@@ -404,8 +436,36 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
   // -- Computed Data Helpers --
   const availablePOs = useMemo(() => {
       const source = purchaseOrders || MOCK_PURCHASE_ORDERS;
-      return source.filter(po => po.status !== 'Abgeschlossen' && po.status !== 'Storniert');
-  }, [purchaseOrders]);
+      return source.filter(po => {
+          if (po.status === 'Storniert') return false;
+          
+          // Math Logic: Check if fully received
+          const totalOrdered = po.items.reduce((sum, i) => sum + i.quantityExpected, 0);
+          if (totalOrdered === 0) return false; // Invalid or empty order
+          
+          let totalReceived = 0;
+          const master = receiptMasters?.find(m => m.poId === po.id);
+          
+          if (master) {
+              // Calculate true received from history logs
+              master.deliveries.forEach(d => {
+                  d.items.forEach(i => {
+                      // Only count quantity if the item is part of the original order
+                      // This ensures manual items added to a receipt don't skew the PO completion logic
+                      if (po.items.some(pi => pi.sku === i.sku)) {
+                          totalReceived += i.receivedQty;
+                      }
+                  });
+              });
+          } else {
+              // Fallback to PO state if no receipts logged yet
+              totalReceived = po.items.reduce((sum, i) => sum + i.quantityReceived, 0);
+          }
+
+          // Return true if NOT complete (received < ordered)
+          return totalReceived < totalOrdered;
+      });
+  }, [purchaseOrders, receiptMasters]);
 
   const currentPo = useMemo(() => {
       return purchaseOrders?.find(p => p.id === linkedPoId);

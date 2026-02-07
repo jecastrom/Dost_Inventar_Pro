@@ -123,6 +123,44 @@ const ReceiptStatusBadges = ({
     return <div className="flex flex-wrap items-center gap-1.5">{badges}</div>;
 };
 
+// --- HELPER: INSPECTION STATE LOGIC ---
+const getInspectionState = (header: ReceiptHeader, po?: PurchaseOrder, master?: ReceiptMaster) => {
+    // 1. Pending Check (Resume Inspection)
+    if (header.status === 'In Prüfung' || header.status === 'Wartet auf Prüfung' || header.lieferscheinNr === 'Ausstehend') {
+        return { canInspect: true, label: 'Prüfung fortsetzen', style: 'primary' };
+    }
+
+    // 2. Math Check (Record Next Delivery)
+    if (po) {
+        // Must exclude 'Cancelled' and 'Archived' logically, though data structure handles archived elsewhere
+        if (po.status === 'Storniert') return { canInspect: false, label: '', style: '' };
+
+        const totalOrdered = po.items.reduce((sum, i) => sum + i.quantityExpected, 0);
+        let totalReceived = 0;
+        
+        // Use Master as source of truth for total received if available
+        if (master) {
+             master.deliveries.forEach(d => {
+                 d.items.forEach(i => {
+                     // Match item SKU to PO item to ensure we only count relevant items
+                     if (po.items.some(pi => pi.sku === i.sku)) {
+                         totalReceived += i.receivedQty;
+                     }
+                 });
+             });
+        } else {
+             // Fallback to PO item status (Legacy)
+             totalReceived = po.items.reduce((sum, i) => sum + i.quantityReceived, 0);
+        }
+        
+        if (totalReceived < totalOrdered) {
+            return { canInspect: true, label: 'Nachlieferung erfassen', style: 'secondary' };
+        }
+    }
+
+    return { canInspect: false, label: '', style: '' };
+};
+
 interface ReceiptManagementProps {
   headers: ReceiptHeader[];
   items: ReceiptItem[];
@@ -138,6 +176,7 @@ interface ReceiptManagementProps {
   onReceiveGoods: (poId: string) => void;
   onNavigate: (module: ActiveModule) => void;
   onRevertReceipt: (batchId: string) => void;
+  onInspect: (po: PurchaseOrder) => void;
 }
 
 // Extended Type for Grouped Rows
@@ -162,7 +201,8 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
   onUpdateTicket,
   onReceiveGoods,
   onNavigate,
-  onRevertReceipt
+  onRevertReceipt,
+  onInspect
 }) => {
   const isDark = theme === 'dark';
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -501,8 +541,23 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
   };
 
   // --- ACTIONS RENDERER (Shared for both layouts) ---
-  const renderActions = () => (
+  const renderActions = (inspectionState?: { canInspect: boolean, label: string, style: string }, po?: PurchaseOrder) => (
       <>
+        {/* SMART INSPECT BUTTON */}
+        {inspectionState?.canInspect && po && (
+            <button
+                onClick={(e) => { e.stopPropagation(); onInspect(po); }}
+                className={`p-1.5 rounded-lg border transition-all ${
+                    inspectionState.style === 'primary' 
+                    ? (isDark ? 'bg-blue-900/20 text-blue-400 border-blue-500/30 hover:bg-blue-900/40' : 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100')
+                    : (isDark ? 'border-slate-700 text-slate-400 hover:text-blue-400 hover:border-blue-500/50' : 'border-slate-300 text-slate-500 hover:text-blue-600 hover:border-blue-300')
+                }`}
+                title={inspectionState.label}
+            >
+                <ClipboardCheck size={16} />
+            </button>
+        )}
+
         {/* SHOW "STORNO" BUTTON IF BOOKED */}
         {selectedHeader?.status === 'Gebucht' && (
             <button
@@ -656,6 +711,8 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                     const linkedMaster = receiptMasters.find(m => m.poId === row.bestellNr);
                     const deliveryCount = row.deliveryCount || 1;
                     const rowTickets = tickets.filter(t => t.receiptId === row.batchId);
+                    
+                    const inspectionState = getInspectionState(row, linkedPO, linkedMaster);
 
                     return (
                     <tr 
@@ -711,7 +768,11 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                           <span className="flex items-center gap-1.5 mt-1 text-xs opacity-70"><User size={12}/> {row.createdByName || 'Unbekannt'}</span>
                         </div>
                       </td>
-                      <td className="p-4 text-right text-slate-400"><ChevronRight size={18} /></td>
+                      <td className="p-4 text-right text-slate-400 flex items-center justify-end gap-2">
+                          {/* IN-ROW ACTIONS */}
+                          {renderActions(inspectionState, linkedPO)}
+                          <ChevronRight size={18} />
+                      </td>
                     </tr>
                   )})}
                   {filteredRows.length === 0 && (
@@ -728,6 +789,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
   }
 
   if (!selectedHeader) return null;
+  const detailInspectionState = getInspectionState(selectedHeader, linkedPO || undefined, linkedMaster || undefined);
 
   return (
     <div className="h-full flex flex-col animate-in slide-in-from-right-8 duration-300">
@@ -898,7 +960,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                                 />
                              </div>
                              <div className="flex gap-1">
-                                {renderActions()}
+                                {renderActions(detailInspectionState, linkedPO || undefined)}
                              </div>
                         </div>
                     </div>

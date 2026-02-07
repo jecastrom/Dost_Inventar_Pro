@@ -10,6 +10,26 @@ import { PurchaseOrder, Theme, ReceiptMaster, ActiveModule, Ticket } from '../ty
 import { LifecycleStepper } from './LifecycleStepper';
 import { MOCK_ITEMS } from '../data'; // Import Mock Data for System Lookup
 
+// --- HELPER: MATH LOGIC FOR COMPLETION ---
+const isOrderComplete = (order: PurchaseOrder) => {
+    if (order.status === 'Storniert') return true;
+    const totalOrdered = order.items.reduce((sum, i) => sum + i.quantityExpected, 0);
+    const totalReceived = order.items.reduce((sum, i) => sum + i.quantityReceived, 0);
+    return totalOrdered > 0 && totalReceived >= totalOrdered;
+};
+
+// --- HELPER: DERIVED STATUS FOR STEPPER VISUALS ---
+// Translates math state into legacy status strings that LifecycleStepper understands
+const getVisualLifecycleStatus = (order: PurchaseOrder) => {
+    if (order.status === 'Storniert') return 'Storniert';
+    if (isOrderComplete(order)) return 'Abgeschlossen';
+    
+    const totalReceived = order.items.reduce((sum, i) => sum + i.quantityReceived, 0);
+    if (totalReceived > 0) return 'Teillieferung';
+    
+    return 'Offen'; 
+};
+
 // --- INTERNAL COMPONENT: STATUS BADGES (SINGLE SOURCE OF TRUTH) ---
 const OrderStatusBadges = ({ order, linkedReceipt, theme }: { order: PurchaseOrder, linkedReceipt?: ReceiptMaster, theme: Theme }) => {
     const isDark = theme === 'dark';
@@ -18,7 +38,7 @@ const OrderStatusBadges = ({ order, linkedReceipt, theme }: { order: PurchaseOrd
     // --- BADGE 1: IDENTITY (ETERNAL) ---
     // Determines if this is a Stock Order or Project Order
     const isProject = order.status === 'Projekt' || order.id.toLowerCase().includes('projekt');
-    const isLager = order.status === 'Lager' || !isProject; // Fallback to Lager if not Project
+    // const isLager = order.status === 'Lager' || !isProject; 
 
     if (isProject) {
         badges.push(
@@ -313,6 +333,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
              <tbody className="divide-y divide-slate-500/10">
                 {filteredOrders.map(order => {
                   const linkedReceipt = receiptMasters.find(r => r.poId === order.id);
+                  const isDone = isOrderComplete(order);
+
                   return (
                   <tr 
                     key={order.id} 
@@ -355,7 +377,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                     </td>
                     <td className="p-4 text-right flex items-center justify-end gap-2">
                         {/* Quick Receipt Action - Only if pure status 'Offen' (or Projekt/Lager) and no receipt started */}
-                        {!order.isArchived && (order.status === 'Offen' || order.status === 'Projekt' || order.status === 'Lager') && !order.linkedReceiptId && (
+                        {!order.isArchived && !isDone && !order.linkedReceiptId && (
                              <button
                                 onClick={(e) => handleQuickReceiptClick(e, order.id)}
                                 className="p-2 hover:bg-purple-500/10 hover:text-purple-500 text-slate-400 rounded-full transition-colors"
@@ -365,8 +387,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                              </button>
                         )}
 
-                        {/* Receive Button */}
-                        {!order.isArchived && order.status !== 'Abgeschlossen' && (
+                        {/* Receive Button - HIDE IF DONE */}
+                        {!order.isArchived && !isDone && (
                             <button 
                                 onClick={(e) => handleReceiveClick(e, order.id)}
                                 className="p-2 hover:bg-emerald-500/10 hover:text-emerald-500 text-slate-400 rounded-full transition-colors"
@@ -376,8 +398,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                             </button>
                         )}
 
-                        {/* Edit Button */}
-                        {!order.isArchived && order.status !== 'Abgeschlossen' ? (
+                        {/* Edit Button - HIDE IF DONE */}
+                        {!order.isArchived && !isDone ? (
                             <button 
                                 onClick={(e) => handleEditClick(e, order)}
                                 className="p-2 hover:bg-[#0077B5]/10 hover:text-[#0077B5] text-slate-400 rounded-full transition-colors"
@@ -385,7 +407,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                             >
                                 <Pencil size={18} />
                             </button>
-                        ) : !order.isArchived && order.status === 'Abgeschlossen' ? (
+                        ) : !order.isArchived && isDone ? (
                             <button 
                                 disabled
                                 className="p-2 opacity-30 cursor-not-allowed text-slate-400"
@@ -499,10 +521,10 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                     </div>
                 </div>
 
-                {/* LIFECYCLE STEPPER VISUALIZATION */}
+                {/* LIFECYCLE STEPPER VISUALIZATION - Using Derived Status for Visuals */}
                 <div className={`px-6 py-6 border-b ${isDark ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-50/50 border-slate-100'}`}>
                     <LifecycleStepper 
-                        status={selectedOrder.status}
+                        status={getVisualLifecycleStatus(selectedOrder)}
                         hasOpenTickets={hasOpenTickets}
                         theme={theme}
                     />
@@ -562,8 +584,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                     
                     {/* Action Toolbar */}
                     <div className="flex items-center gap-2">
-                        {/* 1. Quick Receipt (PackagePlus) */}
-                        {!selectedOrder.isArchived && (selectedOrder.status === 'Offen' || selectedOrder.status === 'Projekt' || selectedOrder.status === 'Lager') && !selectedOrder.linkedReceiptId && (
+                        {/* 1. Quick Receipt (PackagePlus) - Hide if done */}
+                        {!selectedOrder.isArchived && !isOrderComplete(selectedOrder) && !selectedOrder.linkedReceiptId && (
                              <button
                                 onClick={() => {
                                     setSelectedOrderForReceipt(selectedOrder.id);
@@ -581,8 +603,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                              </button>
                         )}
 
-                        {/* 2. Receive / Check (ClipboardCheck) */}
-                        {!selectedOrder.isArchived && selectedOrder.status !== 'Abgeschlossen' && (
+                        {/* 2. Receive / Check (ClipboardCheck) - Hide if done */}
+                        {!selectedOrder.isArchived && !isOrderComplete(selectedOrder) && (
                             <button 
                                 onClick={() => onReceiveGoods(selectedOrder.id)}
                                 className={`px-3 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${
@@ -597,8 +619,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                             </button>
                         )}
 
-                        {/* 3. Edit (Pencil) */}
-                        {!selectedOrder.isArchived && selectedOrder.status !== 'Abgeschlossen' && (
+                        {/* 3. Edit (Pencil) - Hide if done */}
+                        {!selectedOrder.isArchived && !isOrderComplete(selectedOrder) && (
                             <button 
                                 onClick={() => onEdit(selectedOrder)}
                                 className={`px-3 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${

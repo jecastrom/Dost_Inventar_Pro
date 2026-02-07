@@ -181,7 +181,18 @@ export default function App() {
   };
 
   const handleCreateOrder = (order: PurchaseOrder) => {
-    setPurchaseOrders(prev => [order, ...prev]);
+    setPurchaseOrders(prev => {
+        // Upsert Logic: Check if ID exists
+        const exists = prev.some(o => o.id === order.id);
+        
+        if (exists) {
+            // Update existing record
+            return prev.map(o => o.id === order.id ? order : o);
+        }
+        
+        // Insert new record
+        return [order, ...prev];
+    });
   };
 
   const handleArchiveOrder = (id: string) => {
@@ -576,6 +587,7 @@ export default function App() {
                     onReceiveGoods={handleReceiveGoods}
                     onNavigate={handleNavigation}
                     onRevertReceipt={handleRevertReceipt}
+                    onInspect={(po) => handleReceiveGoods(po.id)} // Added Prop for Inspection Trigger
                   />
                 )}
                 

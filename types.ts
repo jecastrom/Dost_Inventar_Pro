@@ -81,6 +81,8 @@ export interface PurchaseOrderItem {
   name: string;
   quantityExpected: number;
   quantityReceived: number;
+  isAddedLater?: boolean; // Item added after initial creation
+  isDeleted?: boolean;    // Item removed ("Soft Delete") during edit
 }
 
 export interface PurchaseOrder {
