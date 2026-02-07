@@ -267,18 +267,12 @@ export default function App() {
     const timestamp = Date.now();
 
     // Determine Context
-    let context: 'normal' | 'project' | 'po-normal' | 'po-project' = 'normal';
-    let source = headerData.lieferscheinNr;
     let isProject = false;
     
     if (headerData.bestellNr) {
-        source = `PO: ${headerData.bestellNr} / LS: ${headerData.lieferscheinNr}`;
         const linkedPO = purchaseOrders.find(p => p.id === headerData.bestellNr);
         if (linkedPO && linkedPO.status === 'Projekt') {
-            context = 'po-project';
             isProject = true;
-        } else {
-            context = 'po-normal';
         }
     }
 
@@ -289,10 +283,8 @@ export default function App() {
     setInventory(prev => {
       const copy = [...prev];
       cartItems.forEach(cartItem => {
-         // Log the action (even if qty 0, though mostly qty > 0)
-         if (cartItem.qty > 0) {
-             handleLogStock(cartItem.item.id, cartItem.item.name, 'add', cartItem.qty, source, context);
-         }
+         // REMOVED LOGGING HERE (Fix for double logging bug)
+         // Logging is now handled exclusively inside GoodsReceiptFlow via onLogStock prop
 
          if (!isProject) {
              const idx = copy.findIndex(i => i.id === cartItem.item.id);
