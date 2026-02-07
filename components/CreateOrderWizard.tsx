@@ -65,6 +65,7 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
             supplier: initialOrder.supplier,
             orderDate: initialOrder.dateCreated, // Expecting YYYY-MM-DD from backend
             expectedDeliveryDate: initialOrder.expectedDeliveryDate || '',
+            // If status is 'Projekt', type is project. Otherwise (Lager, Offen, etc.), it's normal.
             poType: initialOrder.status === 'Projekt' ? 'project' : 'normal'
         });
         setCart(initialOrder.items.map(i => {
@@ -267,7 +268,9 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
               supplier: formData.supplier,
               dateCreated: formData.orderDate,
               expectedDeliveryDate: formData.expectedDeliveryDate,
-              status: formData.poType === 'project' ? 'Projekt' : 'Offen',
+              // STATUS IDENTITY: Set 'Lager' or 'Projekt' based on Type. 
+              // 'Offen' is no longer a stored identity status.
+              status: formData.poType === 'project' ? 'Projekt' : 'Lager',
               isArchived: false,
               items: cart.map(c => ({
                   sku: c.sku,

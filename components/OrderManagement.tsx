@@ -4,11 +4,134 @@ import { createPortal } from 'react-dom';
 import { 
   Search, Filter, Calendar, Truck, ChevronRight, 
   X, FileText, Pencil, ClipboardCheck, Archive, CheckSquare, Square, PackagePlus,
-  CheckCircle2, Ban, Briefcase, Lock, Plus, AlertCircle
+  CheckCircle2, Ban, Briefcase, Lock, Plus, AlertCircle, Box
 } from 'lucide-react';
 import { PurchaseOrder, Theme, ReceiptMaster, ActiveModule, Ticket } from '../types';
 import { LifecycleStepper } from './LifecycleStepper';
 import { MOCK_ITEMS } from '../data'; // Import Mock Data for System Lookup
+
+// --- INTERNAL COMPONENT: STATUS BADGES (SINGLE SOURCE OF TRUTH) ---
+const OrderStatusBadges = ({ order, linkedReceipt, theme }: { order: PurchaseOrder, linkedReceipt?: ReceiptMaster, theme: Theme }) => {
+    const isDark = theme === 'dark';
+    const badges: React.ReactNode[] = [];
+
+    // --- BADGE 1: IDENTITY (ETERNAL) ---
+    // Determines if this is a Stock Order or Project Order
+    const isProject = order.status === 'Projekt' || order.id.toLowerCase().includes('projekt');
+    const isLager = order.status === 'Lager' || !isProject; // Fallback to Lager if not Project
+
+    if (isProject) {
+        badges.push(
+            <span key="id-projekt" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 uppercase tracking-wider ${isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-50 text-blue-600 border-blue-200'}`}>
+                <Briefcase size={10} /> Projekt
+            </span>
+        );
+    } else {
+        badges.push(
+            <span key="id-lager" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 uppercase tracking-wider ${isDark ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                <Box size={10} /> Lager
+            </span>
+        );
+    }
+
+    // --- BADGE 2: LIFECYCLE (CALCULATED MATH) ---
+    // Determines where the order is in time based on goods received
+    const totalOrdered = order.items.reduce((sum, i) => sum + i.quantityExpected, 0);
+    const totalReceived = order.items.reduce((sum, i) => sum + i.quantityReceived, 0);
+
+    if (order.isArchived) {
+        badges.push(
+            <span key="life-archived" className="px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700">
+                Archiviert
+            </span>
+        );
+    } else if (order.status === 'Storniert') {
+        badges.push(
+            <span key="life-cancelled" className="px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider bg-red-100 text-red-600 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-900/50">
+                Storniert
+            </span>
+        );
+    } else if (totalReceived === 0) {
+        badges.push(
+            <span key="life-open" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
+                isDark ? 'text-slate-400 border-slate-700' : 'text-slate-600 border-slate-300 bg-white'
+            }`}>
+                Offen
+            </span>
+        );
+    } else if (totalReceived > 0 && totalReceived < totalOrdered) {
+        badges.push(
+            <span key="life-partial" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
+                isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'
+            }`}>
+                Teillieferung
+            </span>
+        );
+    } else if (totalReceived >= totalOrdered) {
+        badges.push(
+            <span key="life-done" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
+                isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-50 text-emerald-600 border-emerald-200'
+            }`}>
+                Erledigt
+            </span>
+        );
+    }
+
+    // --- BADGE 3 & 4: RECEIPT PROCESS & RESULT ---
+    // Shows status of the linked Goods Receipt if applicable
+    if (linkedReceipt) {
+        const s = linkedReceipt.status as string;
+
+        // Active Process
+        if (s === 'In Prüfung' || s === 'Wartet auf Prüfung') {
+            badges.push(
+                <span key="proc-check" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
+                    isDark ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20'
+                }`}>
+                    In Prüfung
+                </span>
+            );
+        }
+        
+        // Results / Issues
+        if (s === 'Schaden' || s === 'Schaden + Falsch' || s === 'Beschädigt') {
+            badges.push(
+                <span key="proc-damage" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider flex items-center gap-1 ${
+                    isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-50 text-red-600 border-red-200'
+                }`}>
+                    <AlertCircle size={10} /> Schaden
+                </span>
+            );
+        } else if (s === 'Abgelehnt') {
+            badges.push(
+                <span key="proc-rejected" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
+                    isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-50 text-red-600 border-red-200'
+                }`}>
+                    <Ban size={10} /> Abgelehnt
+                </span>
+            );
+        } else if (s === 'Falsch geliefert') {
+            badges.push(
+                <span key="proc-wrong" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
+                    isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'
+                }`}>
+                    Falsch
+                </span>
+            );
+        }
+    } else if (order.linkedReceiptId) {
+        // Fallback for newly created receipts not yet synced to master (Legacy support)
+        badges.push(
+            <span key="proc-legacy" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
+                isDark ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20'
+            }`}>
+                In Prüfung
+            </span>
+        );
+    }
+
+    return <div className="flex flex-wrap gap-2 items-center">{badges}</div>;
+};
 
 interface OrderManagementProps {
   orders: PurchaseOrder[]; // Required prop for Single Source of Truth
@@ -74,129 +197,6 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
       if (!selectedOrder || !selectedOrder.linkedReceiptId) return false;
       return tickets.some(t => t.receiptId === selectedOrder.linkedReceiptId && t.status === 'Open');
   }, [selectedOrder, tickets]);
-
-  // -- MULTI-BADGE STATUS LOGIC --
-  const renderOrderBadges = (order: PurchaseOrder) => {
-    const badges: React.ReactNode[] = [];
-    
-    // 1. Badge: Project Type (Eternal)
-    // Shows if status is 'Projekt'. Note: Ideally this should be a persistent 'type' field, 
-    // but we use status as a proxy per current data structure.
-    if (order.status === 'Projekt') {
-        badges.push(
-            <span key="projekt" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 uppercase tracking-wider ${isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-blue-50 text-blue-600 border-blue-200'}`}>
-                <Briefcase size={10} /> Projekt
-            </span>
-        );
-    }
-
-    // 2. Badge: Lifecycle (Calculated)
-    const totalOrdered = order.items.reduce((sum, i) => sum + i.quantityExpected, 0);
-    const totalReceived = order.items.reduce((sum, i) => sum + i.quantityReceived, 0);
-
-    let lifecycleBadge = null;
-
-    if (order.isArchived) {
-       lifecycleBadge = (
-        <span key="archived" className="px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700">
-          Archiviert
-        </span>
-       );
-    } else if (order.status === 'Storniert') {
-       lifecycleBadge = (
-        <span key="cancelled" className="px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider bg-red-100 text-red-600 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-900/50">
-          Storniert
-        </span>
-       );
-    } else if (totalReceived === 0) {
-        lifecycleBadge = (
-            <span key="open" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
-                isDark ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-slate-100 text-slate-500 border-slate-200'
-            }`}>
-                Offen
-            </span>
-        );
-    } else if (totalReceived > 0 && totalReceived < totalOrdered) {
-        lifecycleBadge = (
-            <span key="partial" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
-                isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'
-            }`}>
-                Teillieferung
-            </span>
-        );
-    } else if (totalReceived >= totalOrdered || order.status === 'Abgeschlossen') {
-        lifecycleBadge = (
-            <span key="done" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
-                isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-emerald-50 text-emerald-600 border-emerald-200'
-            }`}>
-                Erledigt
-            </span>
-        );
-    }
-    
-    if (lifecycleBadge) badges.push(lifecycleBadge);
-
-    // 3. Process & 4. Result (Linked Receipt)
-    const linkedReceipt = receiptMasters.find(r => r.poId === order.id);
-    
-    if (linkedReceipt) {
-        const s = linkedReceipt.status as string; // Cast to string to handle extended statuses
-
-        // Badge 3: Process - Temporary
-        // ONLY if 'In Prüfung' (or similar pending state)
-        if (s === 'In Prüfung' || s === 'Wartet auf Prüfung') {
-             badges.push(
-                <span key="check" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
-                    isDark ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20'
-                }`}>
-                    In Prüfung
-                </span>
-            );
-        }
-
-        // Badge 4: Result - Issues
-        if (s === 'Schaden' || s === 'Schaden + Falsch' || s === 'Beschädigt') {
-             badges.push(
-                <span key="damage" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider flex items-center gap-1 ${
-                    isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-50 text-red-600 border-red-200'
-                }`}>
-                    <AlertCircle size={10} /> Schaden
-                </span>
-            );
-        }
-        
-        if (s === 'Abgelehnt') {
-             badges.push(
-                <span key="rejected" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
-                    isDark ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-red-50 text-red-600 border-red-200'
-                }`}>
-                    <Ban size={10} /> Abgelehnt
-                </span>
-            );
-        }
-
-        if (s === 'Falsch geliefert') {
-             badges.push(
-                <span key="wrong" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
-                    isDark ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-amber-50 text-amber-600 border-amber-200'
-                }`}>
-                    Falsch
-                </span>
-            );
-        }
-    } else if (order.linkedReceiptId) {
-        // Fallback for when Receipt Master hasn't synced but ID is present (e.g. freshly created)
-        badges.push(
-            <span key="check-legacy" className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold border uppercase tracking-wider ${
-                isDark ? 'bg-[#6264A7]/20 text-[#9ea0e6] border-[#6264A7]/40' : 'bg-[#6264A7]/10 text-[#6264A7] border-[#6264A7]/20'
-            }`}>
-                In Prüfung
-            </span>
-        );
-    }
-
-    return <div className="flex flex-wrap gap-2 items-center">{badges}</div>;
-  };
 
   const handleArchiveClick = (id: string, e: React.MouseEvent) => {
     e.stopPropagation(); 
@@ -311,7 +311,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                </tr>
              </thead>
              <tbody className="divide-y divide-slate-500/10">
-                {filteredOrders.map(order => (
+                {filteredOrders.map(order => {
+                  const linkedReceipt = receiptMasters.find(r => r.poId === order.id);
+                  return (
                   <tr 
                     key={order.id} 
                     onClick={() => setSelectedOrder(order)}
@@ -332,7 +334,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                         </div>
                     </td>
                     <td className="p-4">
-                      {renderOrderBadges(order)}
+                      {/* USE INTERNAL COMPONENT FOR STATUS BADGES */}
+                      <OrderStatusBadges order={order} linkedReceipt={linkedReceipt} theme={theme} />
                     </td>
                     <td className="p-4 text-center">
                         {order.pdfUrl ? (
@@ -351,8 +354,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                         </span>
                     </td>
                     <td className="p-4 text-right flex items-center justify-end gap-2">
-                        {/* Quick Receipt Action */}
-                        {!order.isArchived && (order.status === 'Offen' || order.status === 'Projekt') && !order.linkedReceiptId && (
+                        {/* Quick Receipt Action - Only if pure status 'Offen' (or Projekt/Lager) and no receipt started */}
+                        {!order.isArchived && (order.status === 'Offen' || order.status === 'Projekt' || order.status === 'Lager') && !order.linkedReceiptId && (
                              <button
                                 onClick={(e) => handleQuickReceiptClick(e, order.id)}
                                 className="p-2 hover:bg-purple-500/10 hover:text-purple-500 text-slate-400 rounded-full transition-colors"
@@ -413,7 +416,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                         </button>
                     </td>
                   </tr>
-                ))}
+                );
+                })}
                 {filteredOrders.length === 0 && (
                   <tr>
                     <td colSpan={7} className="p-12 text-center text-slate-500">Keine Bestellungen gefunden.</td>
@@ -439,8 +443,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                             Bestell Nummer : {selectedOrder.id}
                         </h3>
                         <div className="flex items-center gap-3">
-                            {/* Uses the same render logic as the table row for consistency */}
-                            {renderOrderBadges(selectedOrder)}
+                            {/* USE INTERNAL COMPONENT FOR STATUS BADGES */}
+                            <OrderStatusBadges 
+                                order={selectedOrder} 
+                                linkedReceipt={receiptMasters.find(r => r.poId === selectedOrder.id)} 
+                                theme={theme} 
+                            />
                             <button onClick={() => setSelectedOrder(null)} className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}>
                                 <X size={20} />
                             </button>
@@ -555,7 +563,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                     {/* Action Toolbar */}
                     <div className="flex items-center gap-2">
                         {/* 1. Quick Receipt (PackagePlus) */}
-                        {!selectedOrder.isArchived && (selectedOrder.status === 'Offen' || selectedOrder.status === 'Projekt') && !selectedOrder.linkedReceiptId && (
+                        {!selectedOrder.isArchived && (selectedOrder.status === 'Offen' || selectedOrder.status === 'Projekt' || selectedOrder.status === 'Lager') && !selectedOrder.linkedReceiptId && (
                              <button
                                 onClick={() => {
                                     setSelectedOrderForReceipt(selectedOrder.id);

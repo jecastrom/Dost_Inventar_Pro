@@ -74,7 +74,7 @@ export const TRANSACTION_STATUS_OPTIONS = [
 
 // --- Purchase Order Types (Process-Driven Workflow) ---
 
-export type PurchaseOrderStatus = 'Offen' | 'Teilweise geliefert' | 'Abgeschlossen' | 'Storniert' | 'Projekt';
+export type PurchaseOrderStatus = 'Offen' | 'Teilweise geliefert' | 'Abgeschlossen' | 'Storniert' | 'Projekt' | 'Lager';
 
 export interface PurchaseOrderItem {
   sku: string;
@@ -116,7 +116,7 @@ export interface DeliveryLog {
   items: DeliveryLogItem[];
 }
 
-export type ReceiptMasterStatus = 'Offen' | 'Abgeschlossen' | 'In Prüfung';
+export type ReceiptMasterStatus = 'Offen' | 'Abgeschlossen' | 'In Prüfung' | 'Gebucht' | 'Teillieferung' | 'Schaden' | 'Abgelehnt' | 'Falsch geliefert' | 'Schaden + Falsch' | 'Übermenge' | 'Wartet auf Prüfung';
 
 export interface ReceiptMaster {
   id: string;

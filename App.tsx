@@ -340,10 +340,17 @@ export default function App() {
             });
             const allReceived = updatedItems.every(i => i.quantityReceived >= i.quantityExpected);
             const partiallyReceived = updatedItems.some(i => i.quantityReceived > 0);
+            
+            // GUARD CLAUSE: Protect Identity Statuses (Projekt/Lager)
+            let nextStatus = po.status;
+            if (po.status !== 'Projekt' && po.status !== 'Lager') {
+                nextStatus = allReceived ? 'Abgeschlossen' : partiallyReceived ? 'Teilweise geliefert' : 'Offen';
+            }
+
             return {
                 ...po,
                 items: updatedItems,
-                status: allReceived ? 'Abgeschlossen' : partiallyReceived ? 'Teilweise geliefert' : 'Offen',
+                status: nextStatus,
                 linkedReceiptId: batchId 
             };
         }));
@@ -379,14 +386,15 @@ export default function App() {
 
             if (existingMaster) {
                 return prev.map(m => m.id === existingMaster.id ? { 
-                    ...m, 
+                    ...m,
+                    status: headerData.status as any, // CRITICAL: Update master status to match delivery result (e.g. "Gebucht")
                     deliveries: [...m.deliveries, newDeliveryLog] 
                 } : m);
             } else {
                 return [...prev, {
                     id: crypto.randomUUID(),
                     poId,
-                    status: 'Offen',
+                    status: headerData.status as any,
                     deliveries: [newDeliveryLog]
                 }];
             }
@@ -454,10 +462,17 @@ export default function App() {
                    return pItem;
                });
                const anyReceived = newItems.some(i => i.quantityReceived > 0);
+               
+               // GUARD CLAUSE: Protect Identity Statuses (Projekt/Lager) upon Revert
+               let nextStatus = po.status;
+               if (po.status !== 'Projekt' && po.status !== 'Lager') {
+                   nextStatus = anyReceived ? 'Teilweise geliefert' : 'Offen';
+               }
+
                return {
                    ...po,
                    items: newItems,
-                   status: anyReceived ? 'Teilweise geliefert' : 'Offen'
+                   status: nextStatus
                };
            }));
       }
