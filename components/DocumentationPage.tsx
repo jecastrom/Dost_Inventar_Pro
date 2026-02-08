@@ -37,7 +37,7 @@ export const DocumentationPage: React.FC<DocumentationPageProps> = ({ theme, onB
     </button>
   );
 
-  const DocCard = ({ title, icon, children, className = '' }: { title: string, icon: React.ReactNode, children: React.ReactNode, className?: string }) => (
+  const DocCard = ({ title, icon, children, className = '' }: { title: string, icon: React.ReactNode, children?: React.ReactNode, className?: string }) => (
     <div className={`p-6 rounded-2xl border flex flex-col h-full ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} ${className}`}>
       <div className="flex items-center gap-3 mb-4">
         <div className={`p-2.5 rounded-xl ${isDark ? 'bg-slate-800 text-blue-400' : 'bg-blue-50 text-[#0077B5]'}`}>

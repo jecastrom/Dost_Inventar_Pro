@@ -5,7 +5,7 @@ import {
   Search, Filter, Calendar, Truck, ChevronRight, 
   X, FileText, Pencil, ClipboardCheck, Archive, CheckSquare, Square, PackagePlus,
   CheckCircle2, Ban, Briefcase, Lock, Plus, AlertCircle, Box, AlertTriangle, Info, Clock,
-  Link as LinkIcon, ExternalLink, Copy, Check, Edit2, Trash2
+  Link as LinkIcon, ExternalLink, Copy, Check, Edit2, Trash2, MoreVertical, Eye
 } from 'lucide-react';
 import { PurchaseOrder, Theme, ReceiptMaster, ActiveModule, Ticket } from '../types';
 import { LifecycleStepper } from './LifecycleStepper';
@@ -196,10 +196,15 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({
   const [tempLink, setTempLink] = useState('');
   const [showCopyToast, setShowCopyToast] = useState(false);
 
+  // -- Action Menu State --
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
-            if (confirmModalOpen) {
+            if (activeMenuId) setActiveMenuId(null);
+            else if (confirmModalOpen) {
                 setConfirmModalOpen(false);
                 setSelectedOrderForReceipt(null);
             } else if (selectedOrder) {
@@ -211,9 +216,9 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({
             }
         }
     };
-    if (selectedOrder || confirmModalOpen) window.addEventListener('keydown', handleKeyDown);
+    if (selectedOrder || confirmModalOpen || activeMenuId) window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedOrder, confirmModalOpen, isEditingLink]);
+  }, [selectedOrder, confirmModalOpen, isEditingLink, activeMenuId]);
 
   // Reset link state when opening modal
   useEffect(() => {
@@ -253,6 +258,24 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({
           const updatedOrder = { ...selectedOrder, orderConfirmationUrl: undefined, pdfUrl: undefined };
           onUpdateOrder(updatedOrder);
           setSelectedOrder(updatedOrder);
+      }
+  };
+
+  const toggleMenu = (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (activeMenuId === id) {
+          setActiveMenuId(null);
+      } else {
+          // Calculate position to ensure it fits (simple right align)
+          const rect = e.currentTarget.getBoundingClientRect();
+          const scrollTop = window.scrollY || document.documentElement.scrollTop;
+          const scrollLeft = window.scrollX || document.documentElement.scrollLeft;
+          
+          setMenuPos({ 
+              top: rect.bottom + scrollTop, 
+              right: document.body.clientWidth - (rect.right + scrollLeft) 
+          });
+          setActiveMenuId(id);
       }
   };
 
@@ -306,26 +329,25 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({
       return tickets.some(t => t.receiptId === selectedOrder.linkedReceiptId && t.status === 'Open');
   }, [selectedOrder, tickets]);
 
-  const handleArchiveClick = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation(); 
-    // Direct call, no confirmation
+  const handleArchiveClick = (id: string) => {
     onArchive(id);
+    setActiveMenuId(null);
   };
 
-  const handleEditClick = (e: React.MouseEvent, order: PurchaseOrder) => {
-    e.stopPropagation(); 
+  const handleEditClick = (order: PurchaseOrder) => {
     onEdit(order);
+    setActiveMenuId(null);
   };
 
-  const handleReceiveClick = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
+  const handleReceiveClick = (id: string) => {
     onReceiveGoods(id);
+    setActiveMenuId(null);
   };
 
-  const handleQuickReceiptClick = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
+  const handleQuickReceiptClick = (id: string) => {
     setSelectedOrderForReceipt(id);
     setConfirmModalOpen(true);
+    setActiveMenuId(null);
   };
 
   const handleConfirmQuickReceipt = () => {
@@ -337,6 +359,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({
   const handleCancelQuickReceipt = () => {
     setConfirmModalOpen(false);
     setSelectedOrderForReceipt(null);
+  };
+
+  const handleCancelOrderClick = (id: string) => {
+      onCancelOrder(id);
+      setActiveMenuId(null);
   };
 
   // --- UI Component: Filter Chip ---
@@ -359,9 +386,28 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({
       );
   };
 
+  // --- Action Menu Item Component ---
+  const MenuItem = ({ icon: Icon, label, onClick, danger = false }: { icon: any, label: string, onClick: () => void, danger?: boolean }) => (
+      <button 
+        onClick={(e) => { e.stopPropagation(); onClick(); }}
+        className={`w-full text-left px-3 py-2 text-sm font-medium flex items-center gap-2 transition-colors rounded-lg ${
+            danger 
+            ? 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20' 
+            : isDark ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50'
+        }`}
+      >
+          <Icon size={16} /> {label}
+      </button>
+  );
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       
+      {/* Overlay for Click Outside */}
+      {activeMenuId && (
+          <div className="fixed inset-0 z-40 cursor-default" onClick={() => setActiveMenuId(null)} />
+      )}
+
       {/* Header */}
       <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
         <h2 className="text-2xl font-bold flex items-center gap-2">
@@ -400,13 +446,13 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({
            <table className="w-full text-left text-sm min-w-[800px]">
              <thead className={`border-b ${isDark ? 'bg-slate-950 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
                <tr>
-                 <th className="p-4 font-semibold">Bestell Nummer</th>
-                 <th className="p-4 font-semibold">Datum</th>
-                 <th className="p-4 font-semibold">Lieferant</th>
-                 <th className="p-4 font-semibold w-64">Status</th>
-                 <th className="p-4 font-semibold text-center">Bestätigung</th>
-                 <th className="p-4 font-semibold text-center">Pos.</th>
-                 <th className="p-4 font-semibold text-right">Aktion</th>
+                 <th className="px-4 py-3 font-semibold">Bestell Nummer</th>
+                 <th className="px-4 py-3 font-semibold">Datum</th>
+                 <th className="px-4 py-3 font-semibold">Lieferant</th>
+                 <th className="px-4 py-3 font-semibold w-64">Status</th>
+                 <th className="px-4 py-3 font-semibold text-center">Bestätigung</th>
+                 <th className="px-4 py-3 font-semibold text-center">Pos.</th>
+                 <th className="px-4 py-3 font-semibold text-right">Aktion</th>
                </tr>
              </thead>
              <tbody className="divide-y divide-slate-500/10">
@@ -415,58 +461,83 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({
                   const isDone = isOrderComplete(order);
                   const totalReceived = order.items.reduce((s, i) => s + i.quantityReceived, 0);
                   const hasLink = !!(order.orderConfirmationUrl || order.pdfUrl);
+                  
+                  const isMenuOpen = activeMenuId === order.id;
 
                   return (
-                  <tr key={order.id} onClick={() => setSelectedOrder(order)} className={`cursor-pointer transition-colors ${order.isArchived ? (isDark ? 'bg-slate-900/50 text-slate-500 hover:bg-slate-800/50' : 'bg-slate-50 text-slate-400 hover:bg-slate-100') : (isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-50')}`}>
-                    <td className="p-4 font-mono font-bold text-[#0077B5]">{order.id}</td>
-                    <td className="p-4 flex flex-col text-slate-500 text-xs">
-                        <span className="flex items-center gap-2 font-bold mb-0.5"><Calendar size={12} /> {new Date(order.dateCreated).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
-                        {order.expectedDeliveryDate && isOrderLate(order) && (
-                            <span className="text-red-500 font-bold flex items-center gap-1"><Clock size={10} /> Fällig: {new Date(order.expectedDeliveryDate).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}</span>
-                        )}
+                  <tr key={order.id} onClick={() => setSelectedOrder(order)} className={`cursor-pointer transition-colors border-b last:border-0 ${order.isArchived ? (isDark ? 'bg-slate-900/50 text-slate-500 hover:bg-slate-800/50' : 'bg-slate-50 text-slate-400 hover:bg-slate-100') : (isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-50')}`}>
+                    <td className="px-4 py-3 align-middle font-mono font-bold text-[#0077B5]">{order.id}</td>
+                    <td className="px-4 py-3 align-middle">
+                        <div className="flex flex-col text-slate-500 text-xs">
+                            <span className="flex items-center gap-2 font-bold mb-0.5"><Calendar size={12} /> {new Date(order.dateCreated).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                            {order.expectedDeliveryDate && isOrderLate(order) && (
+                                <span className="text-red-500 font-bold flex items-center gap-1"><Clock size={10} /> Fällig: {new Date(order.expectedDeliveryDate).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}</span>
+                            )}
+                        </div>
                     </td>
-                    <td className="p-4 font-medium"><div className="flex items-center gap-2"><Truck size={14} className="text-slate-400"/> {order.supplier}</div></td>
-                    <td className="p-4"><OrderStatusBadges order={order} linkedReceipt={linkedReceipt} theme={theme} /></td>
-                    <td className="p-4 text-center">
+                    <td className="px-4 py-3 align-middle font-medium">
+                        <div className="flex items-center gap-2"><Truck size={14} className="text-slate-400"/> {order.supplier}</div>
+                    </td>
+                    <td className="px-4 py-3 align-middle">
+                        <div className="h-full flex items-center">
+                            <OrderStatusBadges order={order} linkedReceipt={linkedReceipt} theme={theme} />
+                        </div>
+                    </td>
+                    <td className="px-4 py-3 align-middle text-center">
                         {hasLink ? (
-                            <div className="flex justify-center" title="Bestätigung vorhanden"><CheckCircle2 size={18} className="text-emerald-500" /></div> 
+                            <div className="flex justify-center items-center h-full" title="Bestätigung vorhanden"><CheckCircle2 size={18} className="text-emerald-500" /></div> 
                         ) : (
-                            <div className="flex justify-center opacity-30" title="Keine Bestätigung"><Ban size={18} className="text-slate-500" /></div>
+                            <div className="flex justify-center items-center h-full opacity-30" title="Keine Bestätigung"><Ban size={18} className="text-slate-500" /></div>
                         )}
                     </td>
-                    <td className="p-4 text-center"><span className={`inline-flex items-center justify-center px-2 py-1 rounded-md text-xs font-bold ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'}`}>{order.items.length}</span></td>
-                    <td className="p-4 text-right flex items-center justify-end gap-2">
-                        {!order.isArchived && !isDone && !order.linkedReceiptId && order.status !== 'Storniert' && (
-                             <button onClick={(e) => handleQuickReceiptClick(e, order.id)} className="p-2 hover:bg-purple-500/10 hover:text-purple-500 text-slate-400 rounded-full transition-colors" title="Wareneingang vorerfassen"><PackagePlus size={18} /></button>
-                        )}
-                        {!order.isArchived && !isDone && order.status !== 'Storniert' && (
-                            <button onClick={(e) => handleReceiveClick(e, order.id)} className="p-2 hover:bg-emerald-500/10 hover:text-emerald-500 text-slate-400 rounded-full transition-colors" title="Wareneingang prüfen"><ClipboardCheck size={18} /></button>
-                        )}
-                        {!order.isArchived && !isDone && order.status !== 'Storniert' ? (
-                            <button onClick={(e) => handleEditClick(e, order)} className="p-2 hover:bg-[#0077B5]/10 hover:text-[#0077B5] text-slate-400 rounded-full transition-colors" title="Bearbeiten"><Pencil size={18} /></button>
-                        ) : !order.isArchived && isDone ? (
-                            <button disabled className="p-2 opacity-30 cursor-not-allowed text-slate-400" title="Bearbeitung gesperrt"><Lock size={18} /></button>
-                        ) : null}
-
-                        {/* CANCEL BUTTON: Only if 0 Received & Not Cancelled */}
-                        {!order.isArchived && !isDone && order.status !== 'Storniert' && totalReceived === 0 && (
+                    <td className="px-4 py-3 align-middle text-center"><span className={`inline-flex items-center justify-center px-2 py-1 rounded-md text-xs font-bold ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'}`}>{order.items.length}</span></td>
+                    <td className="px-4 py-3 align-middle text-right relative">
+                        <div className="flex items-center justify-end">
                             <button 
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onCancelOrder(order.id);
-                                }}
-                                className="p-2 hover:bg-red-500/10 hover:text-red-500 text-slate-400 rounded-full transition-colors"
-                                title="Bestellung stornieren (Void)"
+                                onClick={(e) => toggleMenu(order.id, e)}
+                                className={`p-2 rounded-lg transition-colors ${
+                                    isMenuOpen 
+                                    ? 'bg-[#0077B5] text-white shadow-md' 
+                                    : (isDark ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-500')
+                                }`}
                             >
-                                <Ban size={18} />
+                                <MoreVertical size={18} />
                             </button>
-                        )}
+                        </div>
+                        
+                        {/* PORTAL FOR DROPDOWN TO PREVENT CLIPPING */}
+                        {isMenuOpen && createPortal(
+                            <div 
+                                style={{ top: menuPos.top, right: menuPos.right }}
+                                className={`fixed z-50 w-56 rounded-xl shadow-xl border p-1 animate-in fade-in zoom-in-95 duration-100 origin-top-right ${
+                                    isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+                                }`}
+                            >
+                                <div className="flex flex-col gap-0.5">
+                                    <MenuItem icon={Eye} label="Details ansehen" onClick={() => { setSelectedOrder(order); setActiveMenuId(null); }} />
+                                    
+                                    {!order.isArchived && !isDone && order.status !== 'Storniert' && (
+                                        <>
+                                            <MenuItem icon={ClipboardCheck} label="Wareneingang prüfen" onClick={() => handleReceiveClick(order.id)} />
+                                            {!order.linkedReceiptId && (
+                                                <MenuItem icon={PackagePlus} label="Schnell-Buchung" onClick={() => handleQuickReceiptClick(order.id)} />
+                                            )}
+                                            <div className={`h-px my-1 ${isDark ? 'bg-slate-700' : 'bg-slate-100'}`}></div>
+                                            <MenuItem icon={Edit2} label="Bearbeiten" onClick={() => handleEditClick(order)} />
+                                        </>
+                                    )}
 
-                        {!order.isArchived && (
-                            <button onClick={(e) => handleArchiveClick(order.id, e)} className="p-2 hover:bg-amber-500/10 hover:text-amber-500 text-slate-400 rounded-full transition-colors" title="Archivieren"><Archive size={18} /></button>
+                                    {!order.isArchived && !isDone && order.status !== 'Storniert' && totalReceived === 0 && (
+                                        <MenuItem icon={Ban} label="Stornieren" onClick={() => handleCancelOrderClick(order.id)} danger />
+                                    )}
+
+                                    {!order.isArchived && (
+                                        <MenuItem icon={Archive} label="Archivieren" onClick={() => handleArchiveClick(order.id)} />
+                                    )}
+                                </div>
+                            </div>,
+                            document.body
                         )}
-                        <div className="w-px h-4 bg-slate-500/20 mx-1" />
-                        <button className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 rounded-full transition-colors"><ChevronRight size={18} /></button>
                     </td>
                   </tr>
                 );
