@@ -83,6 +83,7 @@ export default function App() {
   // Transient State
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedPoId, setSelectedPoId] = useState<string | null>(null);
+  const [goodsReceiptMode, setGoodsReceiptMode] = useState<'standard' | 'return'>('standard');
   const [orderToEdit, setOrderToEdit] = useState<PurchaseOrder | null>(null);
 
   // Toggle Theme
@@ -120,7 +121,10 @@ export default function App() {
   const handleNavigation = (module: ActiveModule) => {
     setActiveModule(module);
     if (module !== 'create-order') setOrderToEdit(null);
-    if (module !== 'goods-receipt') setSelectedPoId(null);
+    if (module !== 'goods-receipt') {
+        setSelectedPoId(null);
+        setGoodsReceiptMode('standard'); // Reset mode on exit
+    }
   };
 
   // Handlers
@@ -208,8 +212,9 @@ export default function App() {
     handleNavigation('create-order');
   };
 
-  const handleReceiveGoods = (poId: string) => {
+  const handleReceiveGoods = (poId: string, mode: 'standard' | 'return' = 'standard') => {
     setSelectedPoId(poId);
+    setGoodsReceiptMode(mode);
     handleNavigation('goods-receipt');
   };
 
@@ -653,6 +658,7 @@ export default function App() {
                     // onLogStock removed to prevent double logging - handled in onSuccess
                     purchaseOrders={purchaseOrders}
                     initialPoId={selectedPoId}
+                    initialMode={goodsReceiptMode} // Pass mode prop
                     receiptMasters={receiptMasters}
                     ticketConfig={ticketConfig}
                     onAddTicket={handleAddTicket}
@@ -675,7 +681,7 @@ export default function App() {
                     onReceiveGoods={handleReceiveGoods}
                     onNavigate={handleNavigation}
                     onRevertReceipt={handleRevertReceipt}
-                    onInspect={(po) => handleReceiveGoods(po.id)} // Added Prop for Inspection Trigger
+                    onInspect={(po, mode) => handleReceiveGoods(po.id, mode as 'standard' | 'return')} // Pass mode to handler
                   />
                 )}
                 

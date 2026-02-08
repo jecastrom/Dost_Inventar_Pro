@@ -6,7 +6,7 @@ import {
   AlertCircle, CheckCircle2, ChevronDown, ChevronUp, FileText, Truck,
   BarChart3, Ban, Archive, Briefcase, Info, PackagePlus,
   AlertTriangle, Layers, XCircle, ClipboardCheck,
-  Undo2, MessageSquare, AlertOctagon, Box, Lock
+  Undo2, MessageSquare, AlertOctagon, Box, Lock, LogOut
 } from 'lucide-react';
 import { ReceiptHeader, ReceiptItem, Theme, ReceiptComment, Ticket, PurchaseOrder, ReceiptMaster, DeliveryLog, ActiveModule } from '../types';
 import { TicketSystem } from './TicketSystem';
@@ -200,7 +200,7 @@ interface ReceiptManagementProps {
   onReceiveGoods: (poId: string) => void;
   onNavigate: (module: ActiveModule) => void;
   onRevertReceipt: (batchId: string) => void;
-  onInspect: (po: PurchaseOrder) => void;
+  onInspect: (po: PurchaseOrder, mode?: 'standard' | 'return') => void;
 }
 
 // Extended Type for Grouped Rows
@@ -691,7 +691,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
         {/* SMART INSPECT BUTTON */}
         {inspectionState?.canInspect && po && (
             <button
-                onClick={(e) => { e.stopPropagation(); onInspect(po); }}
+                onClick={(e) => { e.stopPropagation(); onInspect(po, 'standard'); }}
                 className={`p-1.5 rounded-lg border transition-all ${
                     inspectionState.style === 'primary' 
                     ? (isDark ? 'bg-blue-900/20 text-blue-400 border-blue-500/30 hover:bg-blue-900/40' : 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100')
@@ -700,6 +700,22 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                 title={inspectionState.label}
             >
                 <ClipboardCheck size={16} />
+            </button>
+        )}
+
+        {/* OVERDELIVERY RETURN BUTTON (New) */}
+        {selectedHeader && (selectedHeader.status === 'Übermenge' || selectedHeader.status === 'Zu viel') && po && (
+             <button
+                onClick={(e) => { e.stopPropagation(); onInspect(po, 'return'); }}
+                className={`px-3 py-1.5 rounded-lg border flex items-center gap-2 font-bold text-xs transition-all shadow-sm ${
+                    isDark 
+                    ? 'bg-orange-500/20 text-orange-400 border-orange-500/50 hover:bg-orange-500/30' 
+                    : 'bg-orange-600 text-white border-orange-600 hover:bg-orange-700'
+                }`}
+                title="Rücksendung erfassen (Korrektur)"
+            >
+                <LogOut size={14} /> 
+                <span className="hidden sm:inline">Rücksendung</span>
             </button>
         )}
 
@@ -718,7 +734,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
             </button>
         )}
 
-        {selectedHeader?.status !== 'Abgeschlossen' && (
+        {selectedHeader && selectedHeader.status !== 'Abgeschlossen' && (
             <button
                 onClick={handleForceClose}
                 className={`p-1.5 rounded-lg border transition-all ${

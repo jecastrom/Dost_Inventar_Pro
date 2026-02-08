@@ -199,6 +199,7 @@ interface GoodsReceiptFlowProps {
   onLogStock?: (itemId: string, itemName: string, action: 'add' | 'remove', quantity: number, source?: string, context?: 'normal' | 'project' | 'manual' | 'po-normal' | 'po-project') => void;
   purchaseOrders?: PurchaseOrder[];
   initialPoId?: string | null;
+  initialMode?: 'standard' | 'return'; // New Prop for Mode
   receiptMasters?: ReceiptMaster[];
   ticketConfig: TicketConfig;
   onAddTicket: (ticket: Ticket) => void;
@@ -212,6 +213,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
   onLogStock,
   purchaseOrders,
   initialPoId,
+  initialMode = 'standard', // Default to standard
   receiptMasters = [],
   ticketConfig,
   onAddTicket
@@ -433,17 +435,37 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
   useEffect(() => {
     // Only trigger if: 
     // 1. initialPoId is present
-    // 2. We are on Step 1
-    // 3. No PO is currently linked (prevents loops)
-    if (initialPoId && purchaseOrders && step === 1 && !linkedPoId) {
+    // 2. No PO is currently linked (prevents loops)
+    if (initialPoId && purchaseOrders && !linkedPoId) {
         const po = purchaseOrders.find(p => p.id === initialPoId);
         if (po) {
             handleSelectPO(po);
-            // CRITICAL: Stay on Step 1 to enforce Lieferschein entry
-            setStep(1); 
+            
+            if (initialMode === 'return') {
+                 // Auto-Fill for Return Mode
+                 const datePart = new Date().toLocaleDateString('de-DE', {day: '2-digit', month: '2-digit', year: 'numeric'}).replace(/\./g, '');
+                 const retLsNr = `RET-${datePart}`;
+                 
+                 // Smart Location Lookup (from Inventory)
+                 let loc = headerData.warehouseLocation || 'Wareneingang';
+                 const firstItem = existingItems.find(i => i.sku === po.items[0]?.sku);
+                 if (firstItem?.warehouseLocation) loc = firstItem.warehouseLocation;
+
+                 setHeaderData(prev => ({
+                     ...prev,
+                     lieferscheinNr: retLsNr,
+                     warehouseLocation: loc,
+                     status: 'Rücklieferung' // Initial guess
+                 }));
+                 
+                 // Auto-Jump
+                 setStep(2);
+            } else {
+                 setStep(1); 
+            }
         }
     }
-  }, [initialPoId, purchaseOrders]); // Intentionally not including other deps to run once on mount/prop change
+  }, [initialPoId, purchaseOrders, initialMode]); 
 
   // --- ADMIN CLOSE LOGIC ---
   const handleAdminCloseToggle = (checked: boolean) => {
@@ -486,8 +508,10 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     const issueTypesSet = new Set<string>();
 
     cart.forEach(c => {
+        const itemLabel = `${c.item.name} (${c.item.sku})`;
+
+        // 1. Explicit Rejection (User manually rejected items)
         if (c.qtyRejected > 0) {
-            const itemLabel = `${c.item.name} (${c.item.sku})`;
             const reason = c.rejectionReason === 'Damaged' ? 'Beschädigt' : c.rejectionReason === 'Wrong' ? 'Falsch' : c.rejectionReason === 'Overdelivery' ? 'Übermenge' : 'Sonstiges';
             detailedIssues.push(`${itemLabel}: ${c.qtyRejected}x Abgelehnt (${reason}) - ${c.rejectionNotes}`);
             
@@ -495,6 +519,17 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
             if (c.rejectionReason === 'Wrong') issueTypesSet.add('Falschlieferung');
             if (c.rejectionReason === 'Overdelivery') issueTypesSet.add('Überlieferung');
             if (c.rejectionReason === 'Other') issueTypesSet.add('Abweichung');
+        }
+
+        // 2. Implicit Overdelivery Logic (User accepted more than ordered)
+        // This catches cases where user accepts the extra items instead of rejecting them.
+        if (ticketConfig.extra && c.orderedQty !== undefined && c.qtyAccepted > 0) {
+             const totalAcceptedNow = (c.previouslyReceived || 0) + c.qtyAccepted;
+             if (totalAcceptedNow > c.orderedQty) {
+                 const overage = totalAcceptedNow - c.orderedQty;
+                 detailedIssues.push(`[Übermenge] ${itemLabel}: ${overage} Stück zu viel geliefert.`);
+                 issueTypesSet.add('Überlieferung');
+             }
         }
     });
 
@@ -566,7 +601,10 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
       {/* HEADER WITH STEPPER */}
       <div className={`p-5 border-b flex justify-between items-center ${isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
         <div className="flex items-center gap-6">
-            <h2 className="text-xl font-bold flex items-center gap-2"><Package className="text-[#0077B5]" /> Wareneingang</h2>
+            <h2 className="text-xl font-bold flex items-center gap-2">
+                {initialMode === 'return' ? <LogOut className="text-orange-600"/> : <Package className="text-[#0077B5]" />} 
+                {initialMode === 'return' ? 'Warenrücksendung' : 'Wareneingang'}
+            </h2>
             
             {/* STEPPER UI */}
             <div className="hidden md:flex items-center gap-2 ml-4">
@@ -643,7 +681,13 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                 </div>
                 <div className="space-y-1">
                     <label className="text-xs font-medium opacity-70">Lagerort (Global) *</label>
-                    <input value={headerData.warehouseLocation} onChange={e => {setHeaderData({...headerData, warehouseLocation: e.target.value}); setCart(p => p.map(i => ({...i, location: e.target.value})))}} className={inputClass} placeholder="z.B. Wareneingang" />
+                    <input 
+                        value={headerData.warehouseLocation} 
+                        onChange={e => {setHeaderData({...headerData, warehouseLocation: e.target.value}); setCart(p => p.map(i => ({...i, location: e.target.value})))}} 
+                        className={`${inputClass} ${initialMode === 'return' ? 'opacity-70 cursor-not-allowed' : ''}`}
+                        placeholder="z.B. Wareneingang" 
+                        disabled={initialMode === 'return'}
+                    />
                 </div>
             </div>
         )}
@@ -680,9 +724,11 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                         const isOk = line.qtyReceived > 0 && !hasRejection;
                         const ordered = line.orderedQty || 0;
                         const prev = line.previouslyReceived || 0;
-                        const current = line.qtyReceived;
-                        const totalPhys = prev + current;
-                        const rawRemaining = ordered - totalPhys;
+                        
+                        // FIX: Use Net Accepted for "Offen" calculation (Ordered - (History + (Rec - Rej)))
+                        const currentNet = line.qtyAccepted; 
+                        const totalEffective = prev + currentNet;
+                        const rawRemaining = ordered - totalEffective;
                         
                         return (
                             <div key={idx} className={`rounded-xl border overflow-hidden transition-all ${
@@ -753,7 +799,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                             <span className="text-[10px] uppercase font-bold opacity-50 mb-1">Erhalten</span>
                                             <input 
                                                 type="number" 
-                                                min="0"
+                                                min={initialMode === 'return' ? undefined : "0"}
                                                 value={line.qtyReceived}
                                                 onChange={e => updateCartItem(idx, 'qtyReceived', parseInt(e.target.value) || 0)}
                                                 className={`w-full p-2 text-center font-bold border rounded-lg outline-none focus:ring-2 transition-all ${isDark ? 'bg-slate-900 border-slate-700 focus:ring-blue-500/30' : 'bg-white border-slate-300 focus:ring-blue-500/20'} ${isAdminClose ? 'opacity-50 cursor-not-allowed' : ''}`}
