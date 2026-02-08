@@ -244,7 +244,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
 
   const handleArchiveClick = (id: string, e: React.MouseEvent) => {
     e.stopPropagation(); 
-    // Removed window.confirm blocking call
+    // Direct call, no confirmation
     onArchive(id);
   };
 
@@ -384,7 +384,6 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                             <button 
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    // Removed window.confirm call for Sandbox compatibility
                                     onCancelOrder(order.id);
                                 }}
                                 className="p-2 hover:bg-red-500/10 hover:text-red-500 text-slate-400 rounded-full transition-colors"
@@ -511,7 +510,6 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                             <button 
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    // Removed window.confirm call for Sandbox compatibility
                                     onCancelOrder(selectedOrder.id);
                                 }}
                                 className={`px-3 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${isDark ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'}`}
