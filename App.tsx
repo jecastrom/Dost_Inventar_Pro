@@ -207,6 +207,10 @@ export default function App() {
     setPurchaseOrders(prev => prev.map(o => o.id === id ? { ...o, isArchived: true } : o));
   };
 
+  const handleCancelOrder = (id: string) => {
+    setPurchaseOrders(prev => prev.map(o => o.id === id ? { ...o, status: 'Storniert' } : o));
+  };
+
   const handleEditOrder = (order: PurchaseOrder) => {
     setOrderToEdit(order);
     handleNavigation('create-order');
@@ -704,6 +708,7 @@ export default function App() {
                      onEdit={handleEditOrder}
                      onReceiveGoods={handleReceiveGoods}
                      onQuickReceipt={handleQuickReceipt}
+                     onCancelOrder={handleCancelOrder}
                      receiptMasters={receiptMasters}
                      onNavigate={handleNavigation}
                      tickets={tickets}
