@@ -6,7 +6,8 @@ import {
   Hash, Info, CheckCircle2, AlertCircle, ChevronDown, Check,
   ArrowRight, ArrowLeft, Trash2, MapPin, FileText, Building2,
   AlertTriangle, Loader2, Home, ClipboardList, Ban, LogOut, 
-  PlusCircle, Clock, Box, ChevronUp, Briefcase, Minus, XCircle
+  PlusCircle, Clock, Box, ChevronUp, Briefcase, Minus, XCircle,
+  ShieldBan
 } from 'lucide-react';
 import { StockItem, Theme, ReceiptHeader, PurchaseOrder, ReceiptMaster, Ticket } from '../types';
 import { MOCK_PURCHASE_ORDERS } from '../data';
@@ -234,6 +235,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
   const [showPoModal, setShowPoModal] = useState(false);
   const [submissionStatus, setSubmissionStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
   const [forceClose, setForceClose] = useState(false); // New State: Short Close
+  const [isAdminClose, setIsAdminClose] = useState(false); // NEW: Administrative Close State
 
   // -- Portals State --
   const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
@@ -368,7 +370,7 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     }));
   };
 
-  const handleSelectPO = (po: PurchaseOrder) => {
+  const handleSelectPO = (po: PurchaseOrder, forcedAdminMode: boolean = false) => {
     setLinkedPoId(po.id);
     setHeaderData(prev => ({ ...prev, bestellNr: po.id, lieferant: po.supplier }));
     setShowPoModal(false);
@@ -385,10 +387,15 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
         });
     }
 
+    const useZeroQty = forcedAdminMode || isAdminClose; // Use explicit flag if passed, or state
+
     const newCartItems: CartItem[] = po.items.map(poItem => {
         const inventoryItem = existingItems.find(ex => ex.sku === poItem.sku);
         const historyQty = historyMap.get(poItem.sku) || 0;
         const remaining = Math.max(0, poItem.quantityExpected - historyQty);
+        
+        // REQ: Step 2 pre-fill 0 if Admin Close
+        const initialQty = useZeroQty ? 0 : remaining;
 
         const item: StockItem = inventoryItem ? { ...inventoryItem } : {
             id: crypto.randomUUID(),
@@ -404,9 +411,9 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
         };
         return {
             item,
-            qtyReceived: remaining, 
+            qtyReceived: initialQty, 
             qtyRejected: 0,
-            qtyAccepted: remaining,
+            qtyAccepted: initialQty,
             rejectionReason: '',
             rejectionNotes: '',
             returnCarrier: '',
@@ -437,6 +444,41 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
         }
     }
   }, [initialPoId, purchaseOrders]); // Intentionally not including other deps to run once on mount/prop change
+
+  // --- ADMIN CLOSE LOGIC ---
+  const handleAdminCloseToggle = (checked: boolean) => {
+      setIsAdminClose(checked);
+      if (checked) {
+          const isoDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+          
+          setHeaderData(prev => ({
+              ...prev,
+              lieferscheinNr: `ABSCHLUSS-${isoDate}`,
+              // Sync supplier if linked
+              lieferant: linkedPoId ? (purchaseOrders?.find(p => p.id === linkedPoId)?.supplier || prev.lieferant) : prev.lieferant
+          }));
+          
+          // Zero out cart
+          setCart(prev => prev.map(c => ({...c, qtyReceived: 0, qtyAccepted: 0, qtyRejected: 0})));
+          
+          // Force Close default (REQ 4)
+          setForceClose(true);
+      } else {
+          setHeaderData(prev => ({
+              ...prev,
+              lieferscheinNr: prev.lieferscheinNr.startsWith('ABSCHLUSS-') ? '' : prev.lieferscheinNr
+          }));
+          setForceClose(false);
+          
+          // Restore cart quantities from PO if possible
+          if (linkedPoId && purchaseOrders) {
+             const po = purchaseOrders.find(p => p.id === linkedPoId);
+             if (po) {
+                 handleSelectPO(po, false); // Explicitly pass false to recalc quantities
+             }
+          }
+      }
+  };
 
   const handleFinalize = () => {
     const batchId = `b-${Date.now()}`;
@@ -561,10 +603,39 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                         {linkedPoId ? <span className="font-mono font-bold">{linkedPoId}</span> : <span className="opacity-50">Aus Liste wählen...</span>}
                         <ClipboardList size={20} className="text-[#0077B5]" />
                     </button>
+
+                    {/* NEW: Admin Close Checkbox */}
+                    <div className={`mt-3 flex items-center gap-3 p-3 rounded-xl border transition-all ${isAdminClose ? (isDark ? 'bg-purple-900/20 border-purple-500/50' : 'bg-purple-50 border-purple-200') : (isDark ? 'border-slate-800' : 'border-slate-200')} ${!linkedPoId ? 'opacity-50 pointer-events-none' : ''}`}>
+                        <div className="relative flex items-center">
+                            <input 
+                                type="checkbox" 
+                                className="peer h-5 w-5 cursor-pointer appearance-none rounded border border-slate-400 bg-transparent transition-all checked:border-purple-600 checked:bg-purple-600"
+                                checked={isAdminClose}
+                                onChange={(e) => handleAdminCloseToggle(e.target.checked)}
+                                disabled={!linkedPoId}
+                                id="adminCloseCheck"
+                            />
+                            <Check size={14} className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-white opacity-0 transition-opacity peer-checked:opacity-100" />
+                        </div>
+                        <label htmlFor="adminCloseCheck" className="cursor-pointer flex-1">
+                            <div className={`text-sm font-bold flex items-center gap-2 ${isAdminClose ? 'text-purple-600 dark:text-purple-400' : isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                                <ShieldBan size={16} /> Keine Lieferung (Nur Abschluss / Stornierung)
+                            </div>
+                            <div className="text-xs opacity-60">
+                                Erstellt einen Null-Beleg und schließt die Bestellung.
+                            </div>
+                        </label>
+                    </div>
                 </div>
                 <div className="space-y-1">
                     <label className="text-xs font-medium opacity-70">Lieferschein Nr. *</label>
-                    <input value={headerData.lieferscheinNr} onChange={e => setHeaderData({...headerData, lieferscheinNr: e.target.value})} className={inputClass} placeholder="LS-..." />
+                    <input 
+                        value={headerData.lieferscheinNr} 
+                        onChange={e => setHeaderData({...headerData, lieferscheinNr: e.target.value})} 
+                        className={`${inputClass} ${isAdminClose ? 'opacity-70 cursor-not-allowed' : ''}`} 
+                        placeholder="LS-..." 
+                        disabled={isAdminClose}
+                    />
                 </div>
                 <div className="space-y-1">
                     <label className="text-xs font-medium opacity-70">Lieferant *</label>
@@ -638,7 +709,8 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                                                     min="0"
                                                     value={line.qtyReceived}
                                                     onChange={e => updateCartItem(idx, 'qtyReceived', parseInt(e.target.value) || 0)}
-                                                    className={`w-20 text-center font-bold p-2 rounded-lg border outline-none focus:ring-2 ${isDark ? 'bg-slate-950 border-slate-700 focus:ring-blue-500/30' : 'bg-white border-slate-300 focus:ring-blue-500/20'}`}
+                                                    className={`w-20 text-center font-bold p-2 rounded-lg border outline-none focus:ring-2 ${isDark ? 'bg-slate-950 border-slate-700 focus:ring-blue-500/30' : 'bg-white border-slate-300 focus:ring-blue-500/20'} ${isAdminClose ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                    disabled={isAdminClose}
                                                 />
                                             </div>
                                         </div>
@@ -779,8 +851,8 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
                     </div>
                 )}
 
-                {/* FORCE CLOSE OPTION FOR PARTIAL DELIVERIES */}
-                {isPartialDelivery && (
+                {/* FORCE CLOSE OPTION FOR PARTIAL DELIVERIES OR ADMIN CLOSE */}
+                {(isPartialDelivery || isAdminClose) && (
                     <div className={`max-w-md mx-auto p-4 rounded-xl border flex items-center gap-4 text-left transition-colors cursor-pointer group ${
                         forceClose 
                         ? (isDark ? 'bg-purple-500/10 border-purple-500/30' : 'bg-purple-50 border-purple-200') 

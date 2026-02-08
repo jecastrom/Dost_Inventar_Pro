@@ -143,34 +143,40 @@ const ReceiptStatusBadges = ({
 
 // --- HELPER: INSPECTION STATE LOGIC ---
 const getInspectionState = (header: ReceiptHeader, po?: PurchaseOrder, master?: ReceiptMaster) => {
-    // 1. Pending Check (Resume Inspection)
+    // 1. Pending Check (Resume Inspection) - HIGHEST PRIORITY
+    // Always allow users to finish an inspection they started, even if the PO status technically says closed.
     if (header.status === 'In Prüfung' || header.status === 'Wartet auf Prüfung' || header.lieferscheinNr === 'Ausstehend') {
         return { canInspect: true, label: 'Prüfung fortsetzen', style: 'primary' };
     }
 
-    // 2. Math Check (Record Next Delivery)
+    // 2. Next Delivery Check (Start NEW Receipt)
     if (po) {
-        // Must exclude 'Cancelled' and 'Archived' logically, though data structure handles archived elsewhere
+        // A. Hard Blockers (Stop Logic)
+        // If Force Closed, Cancelled, or formally Completed, do NOT allow new deliveries.
+        if (po.isForceClosed) return { canInspect: false, label: '', style: '' };
+        if (po.status === 'Abgeschlossen') return { canInspect: false, label: '', style: '' };
         if (po.status === 'Storniert') return { canInspect: false, label: '', style: '' };
 
+        // B. Math Check
         const totalOrdered = po.items.reduce((sum, i) => sum + i.quantityExpected, 0);
         let totalReceived = 0;
         
-        // Use Master as source of truth for total received if available
         if (master) {
+             // Use Receipt Master (DB Truth)
              master.deliveries.forEach(d => {
                  d.items.forEach(i => {
-                     // Match item SKU to PO item to ensure we only count relevant items
+                     // Filter to ensure we only count items relevant to this PO
                      if (po.items.some(pi => pi.sku === i.sku)) {
                          totalReceived += i.receivedQty;
                      }
                  });
              });
         } else {
-             // Fallback to PO item status (Legacy)
+             // Fallback for legacy POs without Master
              totalReceived = po.items.reduce((sum, i) => sum + i.quantityReceived, 0);
         }
         
+        // Only allow "Next Delivery" if there are items pending
         if (totalReceived < totalOrdered) {
             return { canInspect: true, label: 'Nachlieferung erfassen', style: 'secondary' };
         }
@@ -401,6 +407,7 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
   const canReceiveMore = useMemo(() => {
       if (!linkedPO) return false;
       if (linkedPO.status === 'Abgeschlossen' || linkedPO.status === 'Storniert') return false;
+      if (linkedPO.isForceClosed) return false; // Ensure force closed orders cannot receive more
       const hasRemaining = linkedPO.items.some(i => i.quantityReceived < i.quantityExpected);
       return hasRemaining;
   }, [linkedPO]);

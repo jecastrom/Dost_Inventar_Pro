@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { 
   Search, Filter, Calendar, Truck, ChevronRight, 
   X, FileText, Pencil, ClipboardCheck, Archive, CheckSquare, Square, PackagePlus,
-  CheckCircle2, Ban, Briefcase, Lock, Plus, AlertCircle, Box
+  CheckCircle2, Ban, Briefcase, Lock, Plus, AlertCircle, Box, AlertTriangle, Info
 } from 'lucide-react';
 import { PurchaseOrder, Theme, ReceiptMaster, ActiveModule, Ticket } from '../types';
 import { LifecycleStepper } from './LifecycleStepper';
@@ -479,7 +479,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
       {selectedOrder && createPortal(
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setSelectedOrder(null)} />
-            <div className={`relative w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200 ${isDark ? 'bg-slate-900 border border-slate-700' : 'bg-white'}`}>
+            <div className={`relative w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200 ${isDark ? 'bg-slate-900 border border-slate-700' : 'bg-white'}`}>
                 
                 {/* Modal Header */}
                 <div className={`p-6 border-b ${isDark ? 'border-slate-800' : 'border-slate-100'}`}>
@@ -561,8 +561,10 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                         <thead className={`sticky top-0 z-10 ${isDark ? 'bg-slate-950 text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
                             <tr>
                                 <th className="px-6 py-3 font-semibold">Artikel</th>
-                                <th className="px-6 py-3 font-semibold w-32 text-center">Bestellt</th>
-                                <th className="px-6 py-3 font-semibold w-32 text-center">Geliefert</th>
+                                <th className="px-6 py-3 font-semibold w-24 text-center">Bestellt</th>
+                                <th className="px-6 py-3 font-semibold w-24 text-center">Geliefert</th>
+                                <th className="px-6 py-3 font-semibold w-24 text-center">Offen</th>
+                                <th className="px-6 py-3 font-semibold w-20 text-center">Status</th>
                             </tr>
                         </thead>
                         <tbody className={`divide-y ${isDark ? 'divide-slate-800' : 'divide-slate-100'}`}>
@@ -570,6 +572,54 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                                 // Lookup system from MOCK_ITEMS because it's not stored in the PO Item
                                 const stockItem = MOCK_ITEMS.find(si => si.sku === item.sku);
                                 const systemInfo = stockItem?.system || 'Material';
+                                
+                                const isClosed = selectedOrder.isForceClosed;
+                                const isShort = item.quantityReceived < item.quantityExpected;
+                                const isPerfect = item.quantityReceived === item.quantityExpected;
+                                const isOver = item.quantityReceived > item.quantityExpected;
+
+                                // Offen Calculation logic
+                                let openQtyDisplay: React.ReactNode = "-";
+                                const rawOpen = Math.max(0, item.quantityExpected - item.quantityReceived);
+
+                                if (isShort) {
+                                    if (isClosed) {
+                                        // Scenario B: Force Closed / Short -> Show strikethrough of cancelled amount
+                                        openQtyDisplay = (
+                                            <span className="text-slate-400 decoration-slate-400 line-through" title="Restmenge storniert">
+                                                {rawOpen}
+                                            </span>
+                                        );
+                                    } else {
+                                        // Scenario C: Active Short
+                                        openQtyDisplay = <span className="text-amber-500 font-bold">{rawOpen}</span>;
+                                    }
+                                }
+
+                                // Icon Logic
+                                let statusIcon: React.ReactNode;
+
+                                if (isPerfect) {
+                                    // Scenario A: Normal Complete
+                                    statusIcon = <CheckCircle2 className="text-emerald-500" size={18} />;
+                                } else if (isOver) {
+                                    statusIcon = <Info className="text-orange-500" size={18} />; 
+                                } else if (isShort) {
+                                    if (isClosed) {
+                                        // Scenario B: Force Closed -> Gray Check
+                                        statusIcon = (
+                                            <div className="group relative flex justify-center cursor-help" title="Manuell abgeschlossen (Unterlieferung)">
+                                                <CheckCircle2 className="text-slate-400" size={18} />
+                                            </div>
+                                        );
+                                    } else {
+                                        // Scenario C: Active Short -> Warning
+                                        statusIcon = <AlertTriangle className="text-amber-500" size={18} />;
+                                    }
+                                } else {
+                                    // Default/Fallthrough (e.g. 0/0)
+                                    statusIcon = <span className="text-slate-300">-</span>;
+                                }
 
                                 return (
                                 <tr key={idx} className={isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}>
@@ -599,6 +649,12 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                                         }`}>
                                             {item.quantityReceived}
                                         </span>
+                                    </td>
+                                    <td className="px-6 py-4 text-center font-medium">
+                                        {openQtyDisplay}
+                                    </td>
+                                    <td className="px-6 py-4 text-center flex justify-center items-center">
+                                        {statusIcon}
                                     </td>
                                 </tr>
                             )})}
