@@ -244,9 +244,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
 
   const handleArchiveClick = (id: string, e: React.MouseEvent) => {
     e.stopPropagation(); 
-    if (window.confirm("Möchten Sie diese Bestellung wirklich archivieren?")) {
-        onArchive(id);
-    }
+    // Removed window.confirm blocking call
+    onArchive(id);
   };
 
   const handleEditClick = (e: React.MouseEvent, order: PurchaseOrder) => {
@@ -385,9 +384,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                             <button 
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    if (window.confirm("Möchten Sie diese Bestellung wirklich stornieren? Dies setzt den Status auf 'Storniert' und entfernt sie aus den offenen Bestellungen.")) {
-                                        onCancelOrder(order.id);
-                                    }
+                                    // Removed window.confirm call for Sandbox compatibility
+                                    onCancelOrder(order.id);
                                 }}
                                 className="p-2 hover:bg-red-500/10 hover:text-red-500 text-slate-400 rounded-full transition-colors"
                                 title="Bestellung stornieren (Void)"
@@ -513,9 +511,8 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                             <button 
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    if (window.confirm("Möchten Sie diese Bestellung wirklich stornieren?")) {
-                                        onCancelOrder(selectedOrder.id);
-                                    }
+                                    // Removed window.confirm call for Sandbox compatibility
+                                    onCancelOrder(selectedOrder.id);
                                 }}
                                 className={`px-3 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${isDark ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'bg-red-50 text-red-600 hover:bg-red-100'}`}
                                 title="Bestellung stornieren"
@@ -526,7 +523,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                         )}
 
                         {!selectedOrder.isArchived && (
-                            <button onClick={() => { if (window.confirm("Archivieren?")) { onArchive(selectedOrder.id); setSelectedOrder(null); } }} className={`px-3 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${isDark ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`} title="Archivieren"><Archive size={18} /></button>
+                            <button onClick={() => { onArchive(selectedOrder.id); setSelectedOrder(null); }} className={`px-3 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${isDark ? 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`} title="Archivieren"><Archive size={18} /></button>
                         )}
                     </div>
                     <button onClick={() => setSelectedOrder(null)} className={`px-6 py-2.5 rounded-xl font-bold transition-colors ${isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`}>Schließen</button>

@@ -208,9 +208,6 @@ export default function App() {
   };
 
   const handleCancelOrder = (id: string) => {
-    // Debugging: Proof of Life
-    alert(`Debug: Cancel signal received for Order ${id}`);
-    
     setPurchaseOrders(prev => prev.map(o => {
       if (o.id === id) {
         return { ...o, status: 'Storniert' }; 
