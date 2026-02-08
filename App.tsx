@@ -27,6 +27,9 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>('light');
   const [activeModule, setActiveModule] = useState<ActiveModule>('dashboard');
   
+  // -- UX State: Force View Refresh --
+  const [viewKey, setViewKey] = useState(0);
+
   // Persistent Inventory View Mode
   const [inventoryViewMode, setInventoryViewMode] = useState<'grid' | 'list'>(() => {
     if (typeof window !== 'undefined') {
@@ -54,6 +57,16 @@ export default function App() {
         return saved === 'true';
     }
     return false;
+  });
+
+  // Smart Import Feature Flag
+  const [enableSmartImport, setEnableSmartImport] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem('enableSmartImport');
+        // Default to TRUE if not set, or parse existing
+        return saved !== null ? saved === 'true' : true;
+    }
+    return true;
   });
 
   // Ticket Automation Config State
@@ -88,9 +101,16 @@ export default function App() {
 
   // Toggle Theme
   const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  
   useEffect(() => {
-    if (theme === 'dark') document.documentElement.classList.add('dark');
-    else document.documentElement.classList.remove('dark');
+    // Clean up class list
+    document.documentElement.classList.remove('dark', 'soft');
+    
+    if (theme === 'dark') {
+        document.documentElement.classList.add('dark');
+    } else if (theme === 'soft') {
+        document.documentElement.classList.add('soft'); 
+    }
   }, [theme]);
 
   // Sidebar Handler
@@ -111,6 +131,11 @@ export default function App() {
     localStorage.setItem('requireDeliveryDate', String(required));
   };
 
+  const handleSetEnableSmartImport = (enabled: boolean) => {
+    setEnableSmartImport(enabled);
+    localStorage.setItem('enableSmartImport', String(enabled));
+  };
+
   // Ticket Config Handler
   const handleSetTicketConfig = (newConfig: TicketConfig) => {
     setTicketConfig(newConfig);
@@ -119,7 +144,13 @@ export default function App() {
 
   // Navigation Handler (Resets Transient State)
   const handleNavigation = (module: ActiveModule) => {
-    setActiveModule(module);
+    // Logic: If clicking the active module again, force a reset/remount
+    if (activeModule === module) {
+      setViewKey(prev => prev + 1);
+    } else {
+      setActiveModule(module);
+    }
+
     if (module !== 'create-order') setOrderToEdit(null);
     if (module !== 'goods-receipt') {
         setSelectedPoId(null);
@@ -201,6 +232,10 @@ export default function App() {
         // Insert new record
         return [order, ...prev];
     });
+  };
+
+  const handleUpdateOrder = (updatedOrder: PurchaseOrder) => {
+    setPurchaseOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
   };
 
   const handleArchiveOrder = (id: string) => {
@@ -514,6 +549,61 @@ export default function App() {
     }));
     setReceiptItems(prev => [...prev, ...newReceiptItems]);
 
+    // --- 5. AUTO-UPDATE TICKETS FOR RETURNS ---
+    if (cartItems.some(c => c.quantityRejected > 0) && headerData.bestellNr) {
+        const poId = headerData.bestellNr;
+        const returnItems = cartItems.filter(c => c.quantityRejected > 0);
+        
+        const returnMsg = returnItems.map(c => 
+            `Rücksendung: ${c.quantityRejected}x ${c.item.name} (${c.rejectionReason || 'Sonstiges'}). ` +
+            (c.returnCarrier ? `Via ${c.returnCarrier} ${c.returnTrackingId ? `(${c.returnTrackingId})` : ''}` : '')
+        ).join('\n');
+
+        setTickets(prevTickets => prevTickets.map(ticket => {
+            if (ticket.status !== 'Open') return ticket;
+            
+            // Resolve ticket's PO
+            // Logic: Ticket -> ReceiptHeader -> PO ID
+            // We use the 'receiptHeaders' state which contains all EXISTING headers.
+            // If the ticket is new (created in this flow), it won't be found in 'receiptHeaders' yet, 
+            // but its 'receiptId' will match 'batchId' of the current receipt.
+            
+            let isMatch = false;
+            
+            if (ticket.receiptId === batchId) {
+                isMatch = true; // Belongs to current receipt (which belongs to poId)
+            } else {
+                const tHeader = receiptHeaders.find(h => h.batchId === ticket.receiptId);
+                if (tHeader && tHeader.bestellNr === poId) {
+                    isMatch = true;
+                }
+            }
+
+            if (isMatch) {
+                 return {
+                     ...ticket,
+                     messages: [...ticket.messages, {
+                         id: crypto.randomUUID(),
+                         author: 'System',
+                         text: `📦 Logistik Update:\n${returnMsg}`,
+                         timestamp: Date.now() + 100, // +100ms to ensure it appears after creation msg
+                         type: 'system'
+                     }]
+                 };
+            }
+            return ticket;
+        }));
+    }
+
+    // --- 6. SIMULATE NOTIFICATION FOR PROJECT COMPLETION ---
+    if (isProject && finalReceiptStatus === 'Gebucht') {
+        console.log(`[M365 Mock] Sending email to 'technik-verteiler@dost.de': "Wareneingang für Projekt ${headerData.bestellNr} abgeschlossen. Bereit zur Abholung."`);
+        // Visual feedback via setTimeout to allow state to settle or simple alert
+        setTimeout(() => {
+            alert("📧 Automatische E-Mail an das Technik-Team gesendet (Abholbereit).");
+        }, 500);
+    }
+
     handleNavigation('receipt-management');
   };
 
@@ -592,7 +682,11 @@ export default function App() {
   };
 
   return (
-    <div className={`min-h-screen flex transition-colors duration-300 ${theme === 'dark' ? 'bg-[#0f172a] text-slate-100' : 'bg-[#f8fafc] text-slate-900'}`}>
+    <div className={`min-h-screen flex transition-colors duration-300 ${
+        theme === 'dark' ? 'bg-[#0f172a] text-slate-100' : 
+        theme === 'soft' ? 'bg-[#F5F5F6] text-[#323338]' : 
+        'bg-[#f8fafc] text-slate-900'
+    }`}>
       
       <Sidebar 
         theme={theme}
@@ -639,6 +733,7 @@ export default function App() {
 
                 {activeModule === 'inventory' && (
                   <InventoryView 
+                    key={viewKey}
                     inventory={inventory}
                     theme={theme}
                     viewMode={inventoryViewMode}
@@ -652,6 +747,7 @@ export default function App() {
 
                 {activeModule === 'stock-logs' && (
                     <StockLogView 
+                        key={viewKey}
                         logs={stockLogs} 
                         onBack={() => handleNavigation('dashboard')} 
                         theme={theme} 
@@ -676,6 +772,7 @@ export default function App() {
 
                 {activeModule === 'receipt-management' && (
                   <ReceiptManagement 
+                    key={viewKey}
                     headers={receiptHeaders}
                     items={receiptItems}
                     comments={comments}
@@ -702,11 +799,13 @@ export default function App() {
                      onCreateOrder={handleCreateOrder}
                      initialOrder={orderToEdit}
                      requireDeliveryDate={requireDeliveryDate}
+                     enableSmartImport={enableSmartImport}
                   />
                 )}
 
                 {activeModule === 'order-management' && (
                   <OrderManagement 
+                     key={viewKey}
                      orders={purchaseOrders}
                      theme={theme}
                      onArchive={handleArchiveOrder}
@@ -714,6 +813,7 @@ export default function App() {
                      onReceiveGoods={handleReceiveGoods}
                      onQuickReceipt={handleQuickReceipt}
                      onCancelOrder={handleCancelOrder}
+                     onUpdateOrder={handleUpdateOrder}
                      receiptMasters={receiptMasters}
                      onNavigate={handleNavigation}
                      tickets={tickets}
@@ -732,7 +832,8 @@ export default function App() {
                 {activeModule === 'settings' && (
                   <SettingsPage 
                     theme={theme}
-                    toggleTheme={toggleTheme}
+                    toggleTheme={() => setTheme(prev => prev === 'light' ? 'dark' : prev === 'dark' ? 'soft' : 'light')} 
+                    onSetTheme={(t) => setTheme(t)}
                     onNavigate={handleNavigation}
                     onUploadData={(newItems) => setInventory(newItems)}
                     onClearData={() => setInventory(MOCK_ITEMS)}
@@ -743,6 +844,8 @@ export default function App() {
                     onSetInventoryViewMode={handleSetInventoryViewMode}
                     requireDeliveryDate={requireDeliveryDate}
                     onSetRequireDeliveryDate={handleSetRequireDeliveryDate}
+                    enableSmartImport={enableSmartImport}
+                    onSetEnableSmartImport={handleSetEnableSmartImport}
                     ticketConfig={ticketConfig}
                     onSetTicketConfig={handleSetTicketConfig}
                   />

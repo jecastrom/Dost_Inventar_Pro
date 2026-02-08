@@ -144,7 +144,6 @@ const ReceiptStatusBadges = ({
 // --- HELPER: INSPECTION STATE LOGIC ---
 const getInspectionState = (header: ReceiptHeader, po?: PurchaseOrder, master?: ReceiptMaster) => {
     // 1. Pending Check (Resume Inspection) - HIGHEST PRIORITY
-    // Always allow users to finish an inspection they started, even if the PO status technically says closed.
     if (header.status === 'In Prüfung' || header.status === 'Wartet auf Prüfung' || header.lieferscheinNr === 'Ausstehend') {
         return { canInspect: true, label: 'Prüfung fortsetzen', style: 'primary' };
     }
@@ -152,12 +151,11 @@ const getInspectionState = (header: ReceiptHeader, po?: PurchaseOrder, master?: 
     // 2. Next Delivery Check (Start NEW Receipt)
     if (po) {
         // A. Hard Blockers (Stop Logic)
-        // If Force Closed, Cancelled, or formally Completed, do NOT allow new deliveries.
         if (po.isForceClosed) return { canInspect: false, label: '', style: '' };
         if (po.status === 'Abgeschlossen') return { canInspect: false, label: '', style: '' };
         if (po.status === 'Storniert') return { canInspect: false, label: '', style: '' };
 
-        // B. Math Check
+        // B. Math Check (Quantity)
         const totalOrdered = po.items.reduce((sum, i) => sum + i.quantityExpected, 0);
         let totalReceived = 0;
         
@@ -165,20 +163,22 @@ const getInspectionState = (header: ReceiptHeader, po?: PurchaseOrder, master?: 
              // Use Receipt Master (DB Truth)
              master.deliveries.forEach(d => {
                  d.items.forEach(i => {
-                     // Filter to ensure we only count items relevant to this PO
+                     // IMPORTANT: We count only quantityAccepted (Good Stock).
+                     // If items were rejected (damaged, wrong), they are NOT counted here, 
+                     // meaning the PO remains "open" for replacement.
                      if (po.items.some(pi => pi.sku === i.sku)) {
-                         totalReceived += i.receivedQty;
+                         totalReceived += i.quantityAccepted; 
                      }
                  });
              });
         } else {
-             // Fallback for legacy POs without Master
+             // Fallback for legacy POs
              totalReceived = po.items.reduce((sum, i) => sum + i.quantityReceived, 0);
         }
         
-        // Only allow "Next Delivery" if there is pending quantity
+        // Only allow "Next Delivery" if there is pending quantity (Ordered > Accepted)
         if (totalReceived < totalOrdered) {
-            return { canInspect: true, label: 'Nachlieferung erfassen', style: 'secondary' };
+            return { canInspect: true, label: 'Ersatz / Nachlieferung', style: 'secondary' };
         }
     }
 
@@ -698,11 +698,11 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
   // --- ACTIONS RENDERER (Shared for both layouts) ---
   const renderActions = (inspectionState?: { canInspect: boolean, label: string, style: string }, po?: PurchaseOrder) => (
       <>
-        {/* SMART INSPECT BUTTON */}
+        {/* SMART INSPECT BUTTON (Standard / Replacement) */}
         {inspectionState?.canInspect && po && (
             <button
                 onClick={(e) => { e.stopPropagation(); onInspect(po, 'standard'); }}
-                className={`p-1.5 rounded-lg border transition-all ${
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all ${
                     inspectionState.style === 'primary' 
                     ? (isDark ? 'bg-blue-900/20 text-blue-400 border-blue-500/30 hover:bg-blue-900/40' : 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100')
                     : (isDark ? 'border-slate-700 text-slate-400 hover:text-blue-400 hover:border-blue-500/50' : 'border-slate-300 text-slate-500 hover:text-blue-600 hover:border-blue-300')
@@ -710,11 +710,12 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                 title={inspectionState.label}
             >
                 <ClipboardCheck size={16} />
+                <span className="hidden sm:inline text-xs font-bold">{inspectionState.label === 'Prüfung fortsetzen' ? 'Prüfen' : 'Ersatz / Nachlieferung'}</span>
             </button>
         )}
 
-        {/* OVERDELIVERY RETURN BUTTON (New) */}
-        {selectedHeader && (selectedHeader.status === 'Übermenge' || selectedHeader.status === 'Zu viel') && po && (
+        {/* RETURN BUTTON (For ANY Issue or Overdelivery) */}
+        {selectedHeader && ['Übermenge', 'Zu viel', 'Schaden', 'Beschädigt', 'Falsch geliefert', 'Abgelehnt', 'Sonstiges'].some(s => selectedHeader.status.includes(s)) && po && !po.isForceClosed && (
              <button
                 onClick={(e) => { e.stopPropagation(); onInspect(po, 'return'); }}
                 className={`px-3 py-1.5 rounded-lg border flex items-center gap-2 font-bold text-xs transition-all shadow-sm ${
@@ -1042,6 +1043,16 @@ export const ReceiptManagement: React.FC<ReceiptManagementProps> = ({
                   </div>
               </button>
           </div>
+
+          {/* NEW CLOSE BUTTON */}
+          <button 
+            onClick={handleBack} 
+            className={`ml-auto flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${isDark ? 'text-slate-400 hover:bg-slate-800 hover:text-white' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'}`}
+            title="Zurück zur Übersicht"
+          >
+              <span className="hidden md:inline">Schließen</span>
+              <X size={18} />
+          </button>
       </div>
 
       {/* MAIN CONTENT AREA */}

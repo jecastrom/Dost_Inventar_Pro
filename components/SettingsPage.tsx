@@ -1,7 +1,7 @@
 
 import React, { useRef, useState } from 'react';
 import { Theme, StockItem, RawGermanItem, ActiveModule } from '../types';
-import { Book, ChevronRight, Moon, Sun, Monitor, Shield, Info, Upload, Trash2, Database, AlertCircle, CheckCircle2, Users, Sidebar, LayoutPanelLeft, List, LayoutGrid, Bug, Calendar, Ticket, ToggleLeft, ToggleRight, Ban, AlertTriangle, PlusCircle, ChevronDown, ChevronUp, Globe } from 'lucide-react';
+import { Book, ChevronRight, Moon, Sun, Monitor, Shield, Info, Upload, Trash2, Database, AlertCircle, CheckCircle2, Users, Sidebar, LayoutPanelLeft, List, LayoutGrid, Bug, Calendar, Ticket, ToggleLeft, ToggleRight, Ban, AlertTriangle, PlusCircle, ChevronDown, ChevronUp, Globe, Eye, Sparkles } from 'lucide-react';
 
 export interface TicketConfig {
   missing: boolean;  // Offen
@@ -13,7 +13,7 @@ export interface TicketConfig {
 
 interface SettingsPageProps {
   theme: Theme;
-  toggleTheme: () => void;
+  onSetTheme: (theme: Theme) => void; // Updated from toggleTheme to support 3 modes
   onNavigate: (module: ActiveModule) => void;
   onUploadData: (data: StockItem[]) => void;
   onClearData: () => void;
@@ -24,13 +24,15 @@ interface SettingsPageProps {
   onSetInventoryViewMode: (mode: 'grid' | 'list') => void;
   requireDeliveryDate: boolean;
   onSetRequireDeliveryDate: (required: boolean) => void;
+  enableSmartImport: boolean;
+  onSetEnableSmartImport: (enabled: boolean) => void;
   ticketConfig: TicketConfig;
   onSetTicketConfig: (config: TicketConfig) => void;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ 
   theme, 
-  toggleTheme, 
+  onSetTheme, 
   onNavigate,
   onUploadData,
   onClearData,
@@ -41,6 +43,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onSetInventoryViewMode,
   requireDeliveryDate,
   onSetRequireDeliveryDate,
+  enableSmartImport,
+  onSetEnableSmartImport,
   ticketConfig,
   onSetTicketConfig
 }) => {
@@ -128,6 +132,20 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       </button>
   );
 
+  // Theme Preview Button Component
+  const ThemeOption = ({ mode, label, currentTheme, onClick, styleClass }: { mode: Theme, label: string, currentTheme: Theme, onClick: (t: Theme) => void, styleClass: string }) => (
+      <button
+          onClick={() => onClick(mode)}
+          className={`h-9 px-4 rounded-lg text-xs font-bold border transition-all duration-200 flex items-center justify-center ${styleClass} ${
+              currentTheme === mode 
+              ? 'ring-2 ring-[#0077B5] ring-offset-1 dark:ring-offset-slate-900 scale-105 shadow-md' 
+              : 'opacity-70 hover:opacity-100 hover:scale-105'
+          }`}
+      >
+          {label}
+      </button>
+  );
+
   return (
     <div className="max-w-2xl mx-auto pb-20 animate-in fade-in slide-in-from-bottom-4 duration-300">
       <div className="mb-8">
@@ -142,11 +160,33 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </div>
         
         <SettingRow 
-          icon={isDark ? <Moon size={20} /> : <Sun size={20} />}
+          icon={theme === 'dark' ? <Moon size={20} /> : theme === 'soft' ? <Eye size={20} /> : <Sun size={20} />}
           label="Erscheinungsbild"
-          description={isDark ? "Dunkler Modus aktiviert" : "Heller Modus aktiviert"}
+          description="Wählen Sie Ihr bevorzugtes Farbschema."
           action={
-            <Toggle checked={isDark} onChange={toggleTheme} />
+            <div className="flex items-center gap-3">
+                <ThemeOption 
+                    mode="light" 
+                    label="Light" 
+                    currentTheme={theme} 
+                    onClick={onSetTheme} 
+                    styleClass="bg-white border-slate-200 text-slate-700"
+                />
+                <ThemeOption 
+                    mode="soft" 
+                    label="Soft" 
+                    currentTheme={theme} 
+                    onClick={onSetTheme} 
+                    styleClass="bg-[#F5F5F6] border-[#E6E7EB] text-[#323338]"
+                />
+                <ThemeOption 
+                    mode="dark" 
+                    label="Dark" 
+                    currentTheme={theme} 
+                    onClick={onSetTheme} 
+                    styleClass="bg-[#0b1120] border-slate-700 text-white"
+                />
+            </div>
           }
         />
 
@@ -229,6 +269,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
              <Globe size={10} /> Global
           </span>
         </div>
+
+        <SettingRow 
+          icon={<Sparkles size={20} className={isDark ? 'text-blue-400' : 'text-[#0077B5]'} />}
+          label="Smart Import (PDF/Text)"
+          description="Ermöglicht das automatische Auslesen von Bestellungen aus Texten oder Dokumenten."
+          action={
+            <Toggle checked={enableSmartImport} onChange={onSetEnableSmartImport} />
+          }
+        />
 
         <SettingRow 
           icon={<Calendar size={20} className={isDark ? 'text-blue-400' : 'text-[#0077B5]'} />}
@@ -462,8 +511,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         <SettingRow 
           icon={<Info size={20} />}
           label="Version"
-          description="Build 2026.02.01-v0.2.1"
-          action={<span className="text-xs font-mono text-slate-500">v0.2.1</span>}
+          description="Build 2026.02.01-v0.2.2"
+          action={<span className="text-xs font-mono text-slate-500">v0.2.2</span>}
         />
       </div>
 

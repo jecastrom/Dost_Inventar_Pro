@@ -4,7 +4,8 @@ import { createPortal } from 'react-dom';
 import { 
   Search, Filter, Calendar, Truck, ChevronRight, 
   X, FileText, Pencil, ClipboardCheck, Archive, CheckSquare, Square, PackagePlus,
-  CheckCircle2, Ban, Briefcase, Lock, Plus, AlertCircle, Box, AlertTriangle, Info, Clock
+  CheckCircle2, Ban, Briefcase, Lock, Plus, AlertCircle, Box, AlertTriangle, Info, Clock,
+  Link as LinkIcon, ExternalLink, Copy, Check, Edit2, Trash2
 } from 'lucide-react';
 import { PurchaseOrder, Theme, ReceiptMaster, ActiveModule, Ticket } from '../types';
 import { LifecycleStepper } from './LifecycleStepper';
@@ -159,13 +160,26 @@ interface OrderManagementProps {
   onEdit: (order: PurchaseOrder) => void;
   onReceiveGoods: (id: string) => void;
   onQuickReceipt: (id: string) => void;
-  onCancelOrder: (id: string) => void; // RENAMED FROM onCancel
+  onCancelOrder: (id: string) => void;
+  onUpdateOrder: (order: PurchaseOrder) => void; // New prop for saving link
   receiptMasters: ReceiptMaster[];
   onNavigate: (module: ActiveModule) => void;
   tickets: Ticket[];
 }
 
-export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme, onArchive, onEdit, onReceiveGoods, onQuickReceipt, onCancelOrder, receiptMasters, onNavigate, tickets }) => {
+export const OrderManagement: React.FC<OrderManagementProps> = ({ 
+    orders, 
+    theme, 
+    onArchive, 
+    onEdit, 
+    onReceiveGoods, 
+    onQuickReceipt, 
+    onCancelOrder, 
+    onUpdateOrder,
+    receiptMasters, 
+    onNavigate, 
+    tickets 
+}) => {
   const isDark = theme === 'dark';
   const [searchTerm, setSearchTerm] = useState('');
   const [showArchived, setShowArchived] = useState(false);
@@ -177,6 +191,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<string | null>(null);
 
+  // -- Link Management State (Local to Component) --
+  const [isEditingLink, setIsEditingLink] = useState(false);
+  const [tempLink, setTempLink] = useState('');
+  const [showCopyToast, setShowCopyToast] = useState(false);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
@@ -184,13 +203,58 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                 setConfirmModalOpen(false);
                 setSelectedOrderForReceipt(null);
             } else if (selectedOrder) {
-                setSelectedOrder(null);
+                if (isEditingLink) {
+                    setIsEditingLink(false);
+                } else {
+                    setSelectedOrder(null);
+                }
             }
         }
     };
     if (selectedOrder || confirmModalOpen) window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedOrder, confirmModalOpen]);
+  }, [selectedOrder, confirmModalOpen, isEditingLink]);
+
+  // Reset link state when opening modal
+  useEffect(() => {
+      if (selectedOrder) {
+          setIsEditingLink(false);
+          setTempLink('');
+          setShowCopyToast(false);
+      }
+  }, [selectedOrder?.id]);
+
+  // -- Link Handlers --
+  const handleEditLink = () => {
+      setTempLink(selectedOrder?.orderConfirmationUrl || selectedOrder?.pdfUrl || '');
+      setIsEditingLink(true);
+  };
+
+  const handleSaveLink = () => {
+      if (selectedOrder) {
+          const updatedOrder = { ...selectedOrder, orderConfirmationUrl: tempLink };
+          onUpdateOrder(updatedOrder);
+          setSelectedOrder(updatedOrder);
+          setIsEditingLink(false);
+      }
+  };
+
+  const handleCopyLink = () => {
+      const url = selectedOrder?.orderConfirmationUrl || selectedOrder?.pdfUrl;
+      if (url) {
+          navigator.clipboard.writeText(url);
+          setShowCopyToast(true);
+          setTimeout(() => setShowCopyToast(false), 2000);
+      }
+  };
+
+  const handleDeleteLink = () => {
+      if (selectedOrder && window.confirm("Link wirklich entfernen?")) {
+          const updatedOrder = { ...selectedOrder, orderConfirmationUrl: undefined, pdfUrl: undefined };
+          onUpdateOrder(updatedOrder);
+          setSelectedOrder(updatedOrder);
+      }
+  };
 
   // -- Helper Logic --
   const isOrderLate = (o: PurchaseOrder) => {
@@ -350,6 +414,7 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                   const linkedReceipt = receiptMasters.find(r => r.poId === order.id);
                   const isDone = isOrderComplete(order);
                   const totalReceived = order.items.reduce((s, i) => s + i.quantityReceived, 0);
+                  const hasLink = !!(order.orderConfirmationUrl || order.pdfUrl);
 
                   return (
                   <tr key={order.id} onClick={() => setSelectedOrder(order)} className={`cursor-pointer transition-colors ${order.isArchived ? (isDark ? 'bg-slate-900/50 text-slate-500 hover:bg-slate-800/50' : 'bg-slate-50 text-slate-400 hover:bg-slate-100') : (isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-50')}`}>
@@ -363,7 +428,11 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                     <td className="p-4 font-medium"><div className="flex items-center gap-2"><Truck size={14} className="text-slate-400"/> {order.supplier}</div></td>
                     <td className="p-4"><OrderStatusBadges order={order} linkedReceipt={linkedReceipt} theme={theme} /></td>
                     <td className="p-4 text-center">
-                        {order.pdfUrl ? <div className="flex justify-center" title="Bestätigung vorhanden"><CheckCircle2 size={18} className="text-emerald-500" /></div> : <div className="flex justify-center opacity-30" title="Keine Bestätigung"><Ban size={18} className="text-slate-500" /></div>}
+                        {hasLink ? (
+                            <div className="flex justify-center" title="Bestätigung vorhanden"><CheckCircle2 size={18} className="text-emerald-500" /></div> 
+                        ) : (
+                            <div className="flex justify-center opacity-30" title="Keine Bestätigung"><Ban size={18} className="text-slate-500" /></div>
+                        )}
                     </td>
                     <td className="p-4 text-center"><span className={`inline-flex items-center justify-center px-2 py-1 rounded-md text-xs font-bold ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'}`}>{order.items.length}</span></td>
                     <td className="p-4 text-right flex items-center justify-end gap-2">
@@ -429,15 +498,80 @@ export const OrderManagement: React.FC<OrderManagementProps> = ({ orders, theme,
                             <div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-1.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Bestelldatum</div>
                             <div className={`font-medium flex items-center gap-2 ${isDark ? 'text-slate-200' : 'text-slate-700'}`}><Calendar size={16} className="opacity-70" /> {new Date(selectedOrder.dateCreated).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })}</div>
                         </div>
+                        
+                        {/* LINK MANAGER SECTION */}
                         <div>
                             <div className={`text-[10px] uppercase font-bold tracking-wider opacity-60 mb-1.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Bestellbestätigung</div>
-                            <div>
-                                {selectedOrder.pdfUrl ? (
-                                    <a href={selectedOrder.pdfUrl} target="_blank" rel="noopener noreferrer" className="text-[#0077B5] hover:underline hover:text-[#00A0DC] flex items-center gap-2 font-bold transition-colors"><FileText size={16} /> PDF anzeigen</a>
-                                ) : (
-                                    <span className={`italic flex items-center gap-2 ${isDark ? 'text-slate-600' : 'text-slate-400'}`}><FileText size={16} className="opacity-50" /> Kein Anhang</span>
-                                )}
-                            </div>
+                            
+                            {isEditingLink ? (
+                                <div className="flex items-center gap-1">
+                                    <input 
+                                        className={`flex-1 min-w-0 py-1 px-2 rounded border text-xs outline-none focus:ring-1 ${isDark ? 'bg-slate-800 border-slate-700 text-white focus:ring-blue-500' : 'bg-white border-slate-300 text-slate-900 focus:ring-blue-500'}`}
+                                        value={tempLink}
+                                        onChange={e => setTempLink(e.target.value)}
+                                        placeholder="https://..."
+                                        autoFocus
+                                    />
+                                    <button 
+                                        onClick={handleSaveLink}
+                                        className="p-1 rounded bg-emerald-500/20 text-emerald-500 hover:bg-emerald-500/30"
+                                    >
+                                        <Check size={14} />
+                                    </button>
+                                    <button 
+                                        onClick={() => setIsEditingLink(false)}
+                                        className="p-1 rounded bg-slate-500/20 text-slate-500 hover:bg-slate-500/30"
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                </div>
+                            ) : (selectedOrder.orderConfirmationUrl || selectedOrder.pdfUrl) ? (
+                                <div className="flex items-center gap-2 group/link">
+                                    <a 
+                                        href={selectedOrder.orderConfirmationUrl || selectedOrder.pdfUrl} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        className={`flex items-center gap-2 font-bold transition-colors truncate max-w-[120px] sm:max-w-[150px] ${isDark ? 'text-blue-400 hover:text-blue-300' : 'text-[#0077B5] hover:text-[#00A0DC]'}`}
+                                        title={selectedOrder.orderConfirmationUrl || selectedOrder.pdfUrl}
+                                    >
+                                        <LinkIcon size={14} className="shrink-0" />
+                                        <span className="truncate">Link öffnen</span>
+                                        <ExternalLink size={10} className="opacity-50 shrink-0" />
+                                    </a>
+                                    
+                                    <div className="flex items-center gap-1 opacity-0 group-hover/link:opacity-100 transition-opacity">
+                                        <button 
+                                            onClick={handleCopyLink}
+                                            className={`p-1 rounded hover:bg-slate-500/10 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}
+                                            title="Link kopieren"
+                                        >
+                                            <Copy size={12} />
+                                        </button>
+                                        <button 
+                                            onClick={handleEditLink}
+                                            className={`p-1 rounded hover:bg-slate-500/10 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}
+                                            title="Bearbeiten"
+                                        >
+                                            <Edit2 size={12} />
+                                        </button>
+                                        <button 
+                                            onClick={handleDeleteLink}
+                                            className={`p-1 rounded hover:bg-red-500/10 text-red-500`}
+                                            title="Entfernen"
+                                        >
+                                            <Trash2 size={12} />
+                                        </button>
+                                    </div>
+                                    {showCopyToast && <span className="text-[10px] text-emerald-500 font-bold animate-in fade-in slide-in-from-left-2">Kopiert!</span>}
+                                </div>
+                            ) : (
+                                <button 
+                                    onClick={handleEditLink}
+                                    className={`text-xs flex items-center gap-1.5 transition-colors ${isDark ? 'text-slate-500 hover:text-blue-400' : 'text-slate-400 hover:text-[#0077B5]'}`}
+                                >
+                                    <Plus size={14} /> Link hinzufügen
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>

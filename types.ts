@@ -53,7 +53,7 @@ export interface ReceiptComment {
 }
 
 export type ViewMode = 'grid' | 'list';
-export type Theme = 'light' | 'dark';
+export type Theme = 'light' | 'dark' | 'soft';
 export type ActiveModule = 'dashboard' | 'inventory' | 'create-order' | 'goods-receipt' | 'receipt-management' | 'order-management' | 'suppliers' | 'settings' | 'documentation' | 'stock-logs' | 'debug';
 
 export const TRANSACTION_STATUS_OPTIONS = [
@@ -93,6 +93,7 @@ export interface PurchaseOrder {
   expectedDeliveryDate?: string;
   items: PurchaseOrderItem[];
   pdfUrl?: string; // URL to the generated or uploaded PDF
+  orderConfirmationUrl?: string; // Link to Order Confirmation (Bestellbestätigung) e.g. SharePoint
   isArchived: boolean; // POs are never deleted, just archived
   linkedReceiptId?: string; // Reference to the Master Receipt
   isForceClosed?: boolean; // Flag to indicate if the order was short-closed (closed with missing items)

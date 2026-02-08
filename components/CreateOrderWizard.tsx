@@ -5,7 +5,7 @@ import {
   X, Search, Plus, Calendar, Truck, 
   Hash, Info, CheckCircle2, ChevronDown, 
   ArrowRight, ArrowLeft, Trash2, Loader2, AlertTriangle, FileText,
-  Briefcase, Box, Download, Clock, Undo2
+  Briefcase, Box, Download, Clock, Undo2, Sparkles, Import
 } from 'lucide-react';
 import { StockItem, Theme, PurchaseOrder, ActiveModule } from '../types';
 
@@ -16,6 +16,7 @@ interface CreateOrderWizardProps {
   onCreateOrder: (order: PurchaseOrder) => void;
   initialOrder?: PurchaseOrder | null;
   requireDeliveryDate: boolean;
+  enableSmartImport?: boolean;
 }
 
 interface CartItem {
@@ -37,13 +38,121 @@ interface OrderFormData {
   poType: 'normal' | 'project' | null;
 }
 
+// --- UTILS: SMART PARSER ---
+const cleanSku = (sku: string) => sku.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+
+const parsePOText = (text: string, inventory: StockItem[]) => {
+  const lines = text.split('\n');
+  let orderId = '';
+  let orderDate = '';
+  let supplier = '';
+  const parsedItems: any[] = [];
+
+  // Build Lookup Map (Clean SKU -> Item)
+  const skuMap = new Map<string, StockItem>();
+  // Also map Manufacturer -> First Item (to guess supplier)
+  const supplierHintMap = new Map<string, string>(); 
+
+  inventory.forEach(i => {
+    if (i.sku) skuMap.set(cleanSku(i.sku), i);
+    if (i.manufacturer) supplierHintMap.set(i.manufacturer.toLowerCase(), i.manufacturer);
+  });
+
+  // Regex Patterns
+  // Date: Matches DD.MM.YYYY
+  const dateRegex = /(\d{1,2})\.(\d{1,2})\.(\d{2,4})/;
+  
+  // Order ID: Matches "Nr. 123" or "Bestellung 456" or "PO# 789"
+  // Captures alphanumeric sequence of at least 3 chars
+  const idRegex = /(?:Nr\.?|#|Bestellung|Order|Auftrag)\s*[:.]?\s*([A-Za-z0-9\-\/]{3,})/i;
+  
+  // Quantity: Matches "10x", "10 Stk", "10 pcs"
+  const qtyRegex = /(\d+)\s*(?:x|stk|st|pcs|Pack)/i;
+
+  lines.forEach(line => {
+    // 1. Header Extraction
+    if (!orderDate) {
+      const d = line.match(dateRegex);
+      if (d) {
+         let year = d[3];
+         if (year.length === 2) year = '20' + year;
+         orderDate = `${year}-${d[2].padStart(2,'0')}-${d[1].padStart(2,'0')}`;
+      }
+    }
+    if (!orderId) {
+      const id = line.match(idRegex);
+      if (id) orderId = id[1];
+    }
+    
+    // Supplier Guessing (Naive: Check if known supplier name exists in line)
+    if (!supplier) {
+        for (const [key, val] of supplierHintMap.entries()) {
+            if (line.toLowerCase().includes(key)) {
+                supplier = val;
+                break;
+            }
+        }
+    }
+    
+    // 2. Item Extraction
+    // Heuristic: Check if any word in the line matches a clean SKU
+    // Tokenize by space and common delimiters
+    const words = line.replace(/[^a-zA-Z0-9]/g, ' ').split(/\s+/);
+    let foundItem: StockItem | undefined;
+    
+    for(const w of words) {
+        if (w.length < 3) continue; // Skip short noise
+        const clean = cleanSku(w);
+        if (skuMap.has(clean)) {
+            foundItem = skuMap.get(clean);
+            break; // Found an item in this line
+        }
+    }
+
+    if (foundItem) {
+        // Try to find quantity in the SAME line
+        let qty = 1;
+        const q = line.match(qtyRegex);
+        if (q) {
+            qty = parseInt(q[1]);
+        } else {
+            // Fallback: Check if line starts with a number (e.g. "10   4000123   Item")
+            const startNum = line.match(/^\s*(\d+)\s+/);
+            if (startNum) qty = parseInt(startNum[1]);
+        }
+        
+        parsedItems.push({
+            sku: foundItem.sku,
+            name: foundItem.name,
+            quantity: qty,
+            system: foundItem.system || 'Sonstiges',
+            isAddedLater: false,
+            isPersisted: true
+        });
+        
+        // Secondary Supplier Guess: If we found an item, use its manufacturer if we still don't have a supplier
+        if (!supplier && foundItem.manufacturer) {
+            supplier = foundItem.manufacturer;
+        }
+    }
+  });
+
+  return {
+      orderId: orderId,
+      orderDate: orderDate || new Date().toISOString().split('T')[0],
+      supplier: supplier || '',
+      items: parsedItems
+  };
+};
+
 export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({ 
   theme, 
   items, 
   onNavigate, 
   onCreateOrder,
   initialOrder,
-  requireDeliveryDate
+  requireDeliveryDate,
+  enableSmartImport = false
 }) => {
   const isDark = theme === 'dark';
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -89,6 +198,10 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
   // -- UI State: Dropdowns & Portals --
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // -- Smart Import State --
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importText, setImportText] = useState('');
   
   const [newItemData, setNewItemData] = useState({
     name: '',
@@ -230,19 +343,11 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
 
   const addToCart = (item: StockItem) => {
     const isEditMode = !!initialOrder;
-    
-    // Check if item already exists in cart (reactivate if deleted)
     const existingIndex = cart.findIndex(c => c.sku === item.sku);
     if (existingIndex >= 0) {
         if (cart[existingIndex].isDeleted) {
             reactivateCartItem(existingIndex);
         } else {
-            // Increment logic or alert? Usually in PO builder we just add rows. 
-            // Let's assume unique items per PO for simplicity or just add qty.
-            // Requirement is to add item.
-            // Let's just add it as a new line or update existing if purely duplicate? 
-            // For now, let's treat it as reactivating if deleted, otherwise maybe alert or just ignore.
-            // Actually, best to just not add if already active.
             alert("Artikel befindet sich bereits in der Liste.");
         }
     } else {
@@ -251,11 +356,10 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
             name: item.name,
             system: item.system,
             quantity: 1,
-            isAddedLater: isEditMode, // Flag as new addition during edit
+            isAddedLater: isEditMode,
             isPersisted: false
         }]);
     }
-    
     setSearchTerm('');
     setShowSearchDropdown(false);
   };
@@ -282,10 +386,8 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
   const removeCartItem = (idx: number) => {
       const item = cart[idx];
       if (item.isPersisted) {
-          // Soft Delete for existing items
           setCart(prev => prev.map((it, i) => i === idx ? { ...it, isDeleted: true } : it));
       } else {
-          // Hard Delete for fresh items
           setCart(prev => prev.filter((_, i) => i !== idx));
       }
   };
@@ -294,12 +396,33 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
       setCart(prev => prev.map((it, i) => i === idx ? { ...it, isDeleted: false } : it));
   };
 
+  // --- PARSE HANDLER ---
+  const handleParseImport = () => {
+      const result = parsePOText(importText, items);
+      
+      // Update State
+      setFormData(prev => ({
+          ...prev,
+          orderId: result.orderId || prev.orderId,
+          orderDate: result.orderDate || prev.orderDate,
+          supplier: result.supplier || prev.supplier
+      }));
+      
+      if (result.items.length > 0) {
+          setCart(result.items);
+          alert(`${result.items.length} Positionen erkannt und importiert.`);
+      } else {
+          alert("Keine bekannten Artikel im Text gefunden.");
+      }
+      
+      setShowImportModal(false);
+      setImportText('');
+  };
+
   const handleSubmit = async () => {
       setSubmissionStatus('submitting');
-      
       try {
           await new Promise(resolve => setTimeout(resolve, 600));
-
           const newOrder: PurchaseOrder = {
               id: formData.orderId,
               supplier: formData.supplier,
@@ -308,7 +431,6 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
               status: formData.poType === 'project' ? 'Projekt' : 'Lager',
               isArchived: false,
               items: cart.map(c => {
-                  // Preserve received qty if it existed in initial order
                   const originalItem = initialOrder?.items.find(old => old.sku === c.sku);
                   return {
                       sku: c.sku,
@@ -320,7 +442,6 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
                   };
               })
           };
-
           onCreateOrder(newOrder);
           setSubmissionStatus('success');
       } catch (e) {
@@ -337,7 +458,6 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
           return true;
       }
       if (step === 2) {
-          // Allow next if there are valid items (not all deleted)
           return cart.some(c => !c.isDeleted);
       }
       return false;
@@ -380,7 +500,55 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
                         </div>
                     </div>
                 )}
-                {/* Error Block kept same as before */}
+            </div>,
+            document.body
+        )}
+
+        {/* IMPORT MODAL */}
+        {showImportModal && createPortal(
+            <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4">
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setShowImportModal(false)} />
+                <div className={`relative w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200 ${isDark ? 'bg-slate-900 border border-slate-700' : 'bg-white'}`}>
+                    <div className={`p-5 border-b flex justify-between items-center ${isDark ? 'border-slate-800' : 'border-slate-100'}`}>
+                        <h3 className={`font-bold text-lg flex items-center gap-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                            <Sparkles size={20} className="text-[#0077B5]" /> Smart Import
+                        </h3>
+                        <button onClick={() => setShowImportModal(false)} className={`p-1 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}>
+                            <X size={20} />
+                        </button>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <div className={`p-4 rounded-xl border flex gap-3 ${isDark ? 'bg-blue-900/10 border-blue-500/20 text-blue-300' : 'bg-blue-50 border-blue-100 text-blue-700'}`}>
+                            <Info size={20} className="shrink-0" />
+                            <p className="text-sm leading-relaxed">
+                                Kopieren Sie den Text aus einer PDF oder E-Mail und fügen Sie ihn hier ein. 
+                                Wir versuchen automatisch <strong>Datum</strong>, <strong>Bestellnummer</strong> und <strong>Positionen</strong> zu erkennen.
+                            </p>
+                        </div>
+                        <textarea 
+                            value={importText}
+                            onChange={(e) => setImportText(e.target.value)}
+                            placeholder="Fügen Sie hier den Text aus dem PDF/Email ein..."
+                            className={`w-full p-4 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500/30 min-h-[300px] resize-none font-mono text-sm transition-all ${isDark ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+                            autoFocus
+                        />
+                    </div>
+                    <div className={`p-5 border-t flex justify-end gap-3 ${isDark ? 'border-slate-800' : 'border-slate-100'}`}>
+                        <button 
+                            onClick={() => setShowImportModal(false)}
+                            className={`px-5 py-2.5 rounded-xl font-bold transition-colors ${isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'}`}
+                        >
+                            Abbrechen
+                        </button>
+                        <button 
+                            onClick={handleParseImport}
+                            disabled={!importText.trim()}
+                            className="px-5 py-2.5 bg-[#0077B5] hover:bg-[#00A0DC] text-white rounded-xl font-bold shadow-lg shadow-blue-500/20 disabled:opacity-50 disabled:shadow-none transition-all flex items-center gap-2"
+                        >
+                            <Sparkles size={18} /> Analysieren & Übernehmen
+                        </button>
+                    </div>
+                </div>
             </div>,
             document.body
         )}
@@ -407,12 +575,47 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-5 relative">
             
-            {/* Step 1 Content - Unchanged */}
+            {/* PERSISTENT INFO BANNERS (Across Steps 1-3) */}
+            {formData.poType === 'normal' && (
+                <div className={`rounded-lg p-3 mb-6 flex gap-3 items-start animate-in fade-in slide-in-from-top-1 ${isDark ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400' : 'bg-amber-50 border border-amber-200 text-amber-800'}`}>
+                    <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+                    <p className="text-xs leading-relaxed">
+                        <strong>Lagerbestellung:</strong> Die Ware wird nach Wareneingang direkt dem Lagerbestand hinzugefügt.
+                    </p>
+                </div>
+            )}
+
+            {formData.poType === 'project' && (
+                <div className={`rounded-lg p-3 mb-6 flex gap-3 items-start animate-in fade-in slide-in-from-top-1 ${isDark ? 'bg-blue-500/10 border border-blue-500/20 text-blue-400' : 'bg-blue-50 border border-blue-200 text-blue-800'}`}>
+                    <Info size={18} className="shrink-0 mt-0.5" />
+                    <p className="text-xs leading-relaxed">
+                        <strong>Projektbestellung:</strong> Ware wird reserviert. Das Technik-Team wird automatisch per E-Mail benachrichtigt, sobald die Ware zur Abholung bereitsteht.
+                    </p>
+                </div>
+            )}
+
+            {/* Step 1 Content */}
             {step === 1 && (
                 <div className="max-w-xl mx-auto space-y-6 animate-in fade-in slide-in-from-right-4">
-                    <div className="mb-4">
-                        <h3 className="text-lg font-bold mb-1">Schritt 1: Kopfdaten</h3>
-                        <p className="text-sm opacity-70">Geben Sie die Basisdaten der Bestellung ein.</p>
+                    
+                    {/* Header with Smart Import Button */}
+                    <div className="mb-4 flex items-center justify-between">
+                        <div>
+                            <h3 className="text-lg font-bold mb-1">Schritt 1: Kopfdaten</h3>
+                            <p className="text-sm opacity-70">Geben Sie die Basisdaten der Bestellung ein.</p>
+                        </div>
+                        {enableSmartImport && !initialOrder && (
+                            <button 
+                                onClick={() => setShowImportModal(true)}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+                                    isDark 
+                                    ? 'bg-transparent text-slate-400 border-slate-700 hover:text-white hover:border-slate-500' 
+                                    : 'bg-transparent text-slate-500 border-slate-300 hover:text-slate-800 hover:border-slate-400'
+                                }`}
+                            >
+                                <FileText size={14} /> Aus Text/PDF importieren
+                            </button>
+                        )}
                     </div>
 
                     <div className="space-y-4">
@@ -466,7 +669,7 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
                 </div>
             )}
 
-            {/* Step 2: Items (Smart Edit Logic) */}
+            {/* Step 2: Items */}
             {step === 2 && (
                 <div className="max-w-5xl mx-auto space-y-6 animate-in fade-in slide-in-from-right-4">
                     <div className="flex justify-between items-end mb-2">
@@ -483,7 +686,6 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
                     </div>
 
                     <div className="space-y-6 relative z-[50]">
-                        {/* SEARCH / CREATE BLOCK UNCHANGED */}
                         {isCreatingNew ? (
                             <div className={`p-5 rounded-2xl border space-y-4 animate-in slide-in-from-top-2 ${isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
                                 <input value={newItemData.name} onChange={e => setNewItemData({...newItemData, name: e.target.value})} placeholder="Artikelbezeichnung" className={inputClass} autoFocus />
@@ -514,7 +716,6 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
                         )}
                     </div>
 
-                    {/* ITEMS TABLE WITH SMART EDIT VISUALS */}
                     <div className="space-y-3 relative z-0">
                         <h4 className="text-sm font-bold opacity-70 uppercase tracking-wider mb-2">Positionen ({cart.filter(c => !c.isDeleted).length})</h4>
                         {cart.length === 0 ? (
@@ -531,7 +732,6 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
                                     </thead>
                                     <tbody className={`divide-y ${isDark ? 'divide-slate-800' : 'divide-slate-100'}`}>
                                         {cart.map((line, idx) => {
-                                            // Conditional styling for deleted/added items
                                             const isDeleted = line.isDeleted;
                                             const isAdded = line.isAddedLater && !line.isDeleted;
                                             
@@ -588,7 +788,7 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
                 </div>
             )}
 
-            {/* Step 3: Summary (Smart Edit Visuals) */}
+            {/* Step 3: Summary */}
             {step === 3 && (
                 <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in slide-in-from-right-4">
                     <div className="mb-4">
@@ -596,7 +796,6 @@ export const CreateOrderWizard: React.FC<CreateOrderWizardProps> = ({
                         <p className="text-sm opacity-70">Überprüfen Sie die Bestellung vor dem Speichern.</p>
                     </div>
 
-                    {/* Metadata Card Unchanged */}
                     <div className={`p-5 rounded-2xl border mb-6 ${isDark ? 'bg-[#1f2937] border-gray-700' : 'bg-gray-50 border-gray-200'}`}>
                         <div className="grid grid-cols-2 gap-4 text-sm">
                             <div><div className={`text-xs uppercase font-bold tracking-wider mb-0.5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Bestell Nr.</div><div className={`font-bold text-lg ${isDark ? 'text-white' : 'text-gray-900'}`}>{formData.orderId}</div></div>

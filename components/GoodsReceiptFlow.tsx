@@ -507,49 +507,53 @@ export const GoodsReceiptFlow: React.FC<GoodsReceiptFlowProps> = ({
     const detailedIssues: string[] = [];
     const issueTypesSet = new Set<string>();
 
-    cart.forEach(c => {
-        const itemLabel = `${c.item.name} (${c.item.sku})`;
+    // Ticket Automation Logic
+    // Prevent ticket generation if in 'Return' mode (as the return itself is the resolution)
+    if (initialMode !== 'return') {
+        cart.forEach(c => {
+            const itemLabel = `${c.item.name} (${c.item.sku})`;
 
-        // 1. Explicit Rejection (User manually rejected items)
-        if (c.qtyRejected > 0) {
-            const reason = c.rejectionReason === 'Damaged' ? 'Beschädigt' : c.rejectionReason === 'Wrong' ? 'Falsch' : c.rejectionReason === 'Overdelivery' ? 'Übermenge' : 'Sonstiges';
-            detailedIssues.push(`${itemLabel}: ${c.qtyRejected}x Abgelehnt (${reason}) - ${c.rejectionNotes}`);
-            
-            if (c.rejectionReason === 'Damaged') issueTypesSet.add('Beschädigung');
-            if (c.rejectionReason === 'Wrong') issueTypesSet.add('Falschlieferung');
-            if (c.rejectionReason === 'Overdelivery') issueTypesSet.add('Überlieferung');
-            if (c.rejectionReason === 'Other') issueTypesSet.add('Abweichung');
-        }
+            // 1. Explicit Rejection (User manually rejected items)
+            if (c.qtyRejected > 0) {
+                const reason = c.rejectionReason === 'Damaged' ? 'Beschädigt' : c.rejectionReason === 'Wrong' ? 'Falsch' : c.rejectionReason === 'Overdelivery' ? 'Übermenge' : 'Sonstiges';
+                detailedIssues.push(`${itemLabel}: ${c.qtyRejected}x Abgelehnt (${reason}) - ${c.rejectionNotes}`);
+                
+                if (c.rejectionReason === 'Damaged') issueTypesSet.add('Beschädigung');
+                if (c.rejectionReason === 'Wrong') issueTypesSet.add('Falschlieferung');
+                if (c.rejectionReason === 'Overdelivery') issueTypesSet.add('Überlieferung');
+                if (c.rejectionReason === 'Other') issueTypesSet.add('Abweichung');
+            }
 
-        // 2. Implicit Overdelivery Logic (User accepted more than ordered)
-        // This catches cases where user accepts the extra items instead of rejecting them.
-        if (ticketConfig.extra && c.orderedQty !== undefined && c.qtyAccepted > 0) {
-             const totalAcceptedNow = (c.previouslyReceived || 0) + c.qtyAccepted;
-             if (totalAcceptedNow > c.orderedQty) {
-                 const overage = totalAcceptedNow - c.orderedQty;
-                 detailedIssues.push(`[Übermenge] ${itemLabel}: ${overage} Stück zu viel geliefert.`);
-                 issueTypesSet.add('Überlieferung');
-             }
-        }
-    });
+            // 2. Implicit Overdelivery Logic (User accepted more than ordered)
+            // This catches cases where user accepts the extra items instead of rejecting them.
+            if (ticketConfig.extra && c.orderedQty !== undefined && c.qtyAccepted > 0) {
+                 const totalAcceptedNow = (c.previouslyReceived || 0) + c.qtyAccepted;
+                 if (totalAcceptedNow > c.orderedQty) {
+                     const overage = totalAcceptedNow - c.orderedQty;
+                     detailedIssues.push(`[Übermenge] ${itemLabel}: ${overage} Stück zu viel geliefert.`);
+                     issueTypesSet.add('Überlieferung');
+                 }
+            }
+        });
 
-    if (detailedIssues.length > 0) {
-        const subject = `Reklamation: ${Array.from(issueTypesSet).join(', ')}`;
-        const newTicket: Ticket = {
-            id: crypto.randomUUID(),
-            receiptId: batchId,
-            subject: subject,
-            status: 'Open',
-            priority: 'High',
-            messages: [{
+        if (detailedIssues.length > 0) {
+            const subject = `Reklamation: ${Array.from(issueTypesSet).join(', ')}`;
+            const newTicket: Ticket = {
                 id: crypto.randomUUID(),
-                author: 'System',
-                text: `Automatisch erstellter Fall:\n\n${detailedIssues.join('\n')}`,
-                timestamp: Date.now(),
-                type: 'system'
-            }]
-        };
-        onAddTicket(newTicket);
+                receiptId: batchId,
+                subject: subject,
+                status: 'Open',
+                priority: 'High',
+                messages: [{
+                    id: crypto.randomUUID(),
+                    author: 'System',
+                    text: `Automatisch erstellter Fall:\n\n${detailedIssues.join('\n')}`,
+                    timestamp: Date.now(),
+                    type: 'system'
+                }]
+            };
+            onAddTicket(newTicket);
+        }
     }
 
     // Payload Preparation
