@@ -832,7 +832,6 @@ export default function App() {
                 {activeModule === 'settings' && (
                   <SettingsPage 
                     theme={theme}
-                    toggleTheme={() => setTheme(prev => prev === 'light' ? 'dark' : prev === 'dark' ? 'soft' : 'light')} 
                     onSetTheme={(t) => setTheme(t)}
                     onNavigate={handleNavigation}
                     onUploadData={(newItems) => setInventory(newItems)}
